@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "pentadiagonal-solver: a batched pentadiagonal solver with CUDA optimisations"
+authors:
+  - family-names: "Agrawal"
+    given-names: "Sidhant Kumar"
+    affiliation: "University of Warwick"
+  - family-names: "Shukla"
+    given-names: "Nidhi"
+    affiliation: "University of Warwick"
+abstract: >-
+  A batched pentadiagonal linear-system solver for CPUs and NVIDIA GPUs,
+  targeting ADI (Alternating Direction Implicit) workloads. Provides a family
+  of memory-bandwidth-optimised CUDA kernels (register-resident POP-PCR/SPIKE,
+  fused on-chip-transpose Thomas, and an ADI-structured shared-coefficient
+  solver) that reach 8–11x speedups over a multi-core CPU baseline.
+keywords:
+  - pentadiagonal solver
+  - CUDA
+  - GPU
+  - ADI
+  - Thomas algorithm
+  - SPIKE
+  - PCR
+  - high performance computing
+license: BSD-3-Clause
+repository-code: "https://github.com/SidhantKrAgrawal/pentadiagonal-solver"
