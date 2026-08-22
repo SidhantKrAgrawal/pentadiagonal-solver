@@ -1,0 +1,55 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "gpu",
+      "displayName": "GPU (CUDA + OpenMP, single node)",
+      "description": "Builds the CUDA library, the ADI apps, benchmarks and tests. Set CMAKE_CUDA_ARCHITECTURES for your GPU (default: native).",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_FOR_CPU": "ON",
+        "BUILD_FOR_CUDA": "ON",
+        "BUILD_FOR_SN": "ON",
+        "BUILD_FOR_MPI": "OFF",
+        "ENABLE_DEVELOPER_MODE": "OFF",
+        "CMAKE_CUDA_ARCHITECTURES": "native"
+      }
+    },
+    {
+      "name": "gpu-mpi",
+      "displayName": "GPU + MPI (multi-rank CPU/CUDA)",
+      "description": "As 'gpu' plus the distributed MPI library and apps. Requires an MPI installation (e.g. OpenMPI).",
+      "binaryDir": "${sourceDir}/build-mpi",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_FOR_CPU": "ON",
+        "BUILD_FOR_CUDA": "ON",
+        "BUILD_FOR_SN": "ON",
+        "BUILD_FOR_MPI": "ON",
+        "ENABLE_DEVELOPER_MODE": "OFF",
+        "CMAKE_CUDA_ARCHITECTURES": "native"
+      }
+    },
+    {
+      "name": "cpu",
+      "displayName": "CPU only (OpenMP, no CUDA)",
+      "description": "Builds only the CPU library, CPU apps, benchmarks and tests. No GPU/CUDA toolkit required.",
+      "binaryDir": "${sourceDir}/build-cpu",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_FOR_CPU": "ON",
+        "BUILD_FOR_CUDA": "OFF",
+        "BUILD_FOR_SN": "ON",
+        "BUILD_FOR_MPI": "OFF",
+        "ENABLE_DEVELOPER_MODE": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "gpu",     "configurePreset": "gpu" },
+    { "name": "gpu-mpi", "configurePreset": "gpu-mpi" },
+    { "name": "cpu",     "configurePreset": "cpu" }
+  ]
+}
