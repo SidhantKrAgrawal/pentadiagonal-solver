@@ -1,0 +1,43 @@
+# Build directories (all presets) and CMake user files
+build/
+build-*/
+out/
+cmake-build-*/
+conan-cache/
+CMakeUserPresets.json
+
+# Everything the measurement scripts write
+results/
+
+# Prerequisites / objects / libs / executables
+*.d
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+*.so
+*.dylib
+*.dll
+*.mod
+*.smod
+*.lai
+*.la
+*.a
+*.lib
+*.exe
+*.out
+*.app
+
+# Editor / OS cruft
+.vscode/
+.idea/
+.DS_Store
+__MACOSX/
+*.swp
+
+# Stale Catch2 xml test output
+.OUTPUT_PREFIX/
+**/.OUTPUT_PREFIX/
+unittests.*.xml

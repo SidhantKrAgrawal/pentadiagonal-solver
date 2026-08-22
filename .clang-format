@@ -1,0 +1,8 @@
+BasedOnStyle: LLVM
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: true
+DeriveLineEnding: false
+SortIncludes: false
+AlignConsecutiveMacros: true
+AlignConsecutiveAssignments: true
+
