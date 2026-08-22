@@ -143,15 +143,33 @@ In FP32 the x direction uses Algorithm 3 when the system size is one of 128,
 256, 320, 384 or 512, and Algorithm 2 otherwise. The y and z directions use
 Algorithm 3.
 
-In FP64 the y and z directions use Algorithm 1, because Algorithm 3's redundant
-arithmetic is compute bound at the consumer FP64 rate and costs around 44 ms.
-The x direction depends on the device's FP64 throughput ratio, which is queried
-at runtime rather than assumed. On parts where FP64 runs at 1/32 of FP32 or
-better, including Pascal, V100, A100 and H100, x uses Algorithm 3. On consumer
-Ampere and Ada, where FP64 runs at 1/64, x uses Algorithm 2. So
-`build/apps/app_cuda 256 50 double` runs Algorithm 2 on an RTX 3050 and
-Algorithm 3 on a GTX 1080 or a datacentre card, with Algorithm 1 on y and z in
-both cases.
+### Which algorithm does `app_cuda 256 50 double` use?
+
+It depends on the GPU, because the dispatch queries the device's FP64 rate at
+runtime rather than hardcoding it (src/cuda/singlenode/pentad_cuda.cu:1499):
+
+```cpp
+const bool fp64_favours_algo3 =
+    (sizeof(Float) == 8) && (device_fp64_ratio_denom() <= 32);
+```
+
+x direction: Algorithm 3 (thomas-pcr) when FP64 runs at 1/32 of FP32 or better,
+otherwise Algorithm 2 (transpose).
+
+```
+RTX 3050 (sm_86, 1/64)    -> Algorithm 2
+GTX 1080 (sm_61, 1/32)    -> Algorithm 3
+V100 / A100 / H100 (1/2)  -> Algorithm 3
+```
+
+y and z directions: Algorithm 1 (naive) in both cases. The FP32 auto path to
+Algorithm 3 is gated on `sizeof(Float) == 4`, so FP64 never takes it, and
+Algorithm 3's redundant arithmetic is compute bound at the consumer FP64 rate,
+costing about 44 ms there.
+
+So on an RTX 3050 that command runs Algorithm 2 on x and Algorithm 1 on y and z.
+The app prints the kernel that actually ran on each line, so none of this has to
+be inferred.
 
 Other variables: PENTA_PCR_LANES (8, 16 or 32) sets the lanes per system for
 Algorithm 3; PENTA_WARMUP_MS sets the warm up wall time, default 1500;
