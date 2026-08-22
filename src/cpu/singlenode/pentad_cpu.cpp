@@ -164,8 +164,8 @@ void pentad_x_transpose(const REAL *__restrict s, const REAL *__restrict l,
 
   if (sys_size != sys_pad) {
     // perform a noncomplete forward
-    // Loads are safe since sys_pads must be a multiple of SIMD_WIDTH, and we
-    // don't use data in paddings
+    // Loads are safe since sys_pads must be a multiple of SIMD_WIDTH, and
+    // data in the padding is never used
 
     int n = ROUND_DOWN(sys_size, SIMD_VEC);
     LOAD(s_reg, s, n, sys_pad);

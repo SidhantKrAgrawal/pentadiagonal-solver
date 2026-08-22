@@ -52,7 +52,7 @@ void test_solver_from_file(const std::filesystem::path &file_name) {
     domain_size *= local_sizes[i];
   }
 
-  // Simulate distributed environment: only load our data
+  // Simulate distributed environment: only load the local data
   std::vector<Float> ds;
   std::vector<Float> dl;
   std::vector<Float> d;

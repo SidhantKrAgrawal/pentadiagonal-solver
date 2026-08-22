@@ -116,7 +116,7 @@ __global__ void pentadsolver_batch_x_kernel(const Float *__restrict__ ds,
   }
 }
 
-// Forward declaration — defined below after pentadsolver_strided.
+// Forward declaration, defined below after pentadsolver_strided.
 template <typename Float>
 __global__ void pentadsolver_batch_outermost_kernel(
     const Float *__restrict__ ds, const Float *__restrict__ dl,
@@ -126,7 +126,7 @@ __global__ void pentadsolver_batch_outermost_kernel(
     Float *__restrict__ x2_g, size_t t_n_sys, size_t t_sys_size);
 
 // Forward transpose: 3 arrays at a time from [sys][elem] to [elem][sys].
-// Grid: (ceil(sys_size/X_TILE), ceil(n_sys/X_TILE)) — x covers elems, y covers sys.
+// Grid: (ceil(sys_size/X_TILE), ceil(n_sys/X_TILE)), x covers elems, y covers sys.
 // Load is coalesced (consecutive tx at same ty read consecutive elements of same
 // system).  Store is coalesced (consecutive tx at same ty write consecutive sys
 // indices at same element) after swapping tx/ty for the output address.
@@ -220,7 +220,7 @@ void pentadsolver_batch_x_coalesced(const Float *ds, const Float *dl,
   transpose_fwd_3<<<grid_fwd, block>>>(ds, dl, d,  ds_T, dl_T, d_T,  t_n_sys, t_sys_size);
   transpose_fwd_3<<<grid_fwd, block>>>(du, dw, x,  du_T, dw_T, x_T,  t_n_sys, t_sys_size);
 
-  // Solve on transposed data — identical path to outermost (z-solve) kernel
+  // Solve on transposed data, identical path to outermost (z-solve) kernel
   constexpr int block_dim = 128;
   int nblocks = 1 + (static_cast<int>(t_n_sys) - 1) / block_dim;
   pentadsolver_batch_outermost_kernel<<<nblocks, block_dim>>>(
@@ -390,13 +390,13 @@ __device__ __forceinline__ void pop_pcr_round(
 // registers.  Shared by Algorithm 3's x-solve kernel below.
 // On entry: lane t's register tile holds coefficient rows [t*M, (t+1)*M) and
 // x_r = the RHS tile.  On exit: x_r = the SOLUTION tile.  The coefficient
-// register arrays are modified (coupling entries stripped) — callers must not
+// register arrays are modified (coupling entries stripped), callers must not
 // reuse them.  All 32 lanes of the warp must call this together (shuffles).
 // PEEL_LAST drops the dead spike columns from the final PCR round.  It removes
 // arithmetic but needs a second inlined copy of the round, which costs
 // registers.  That is a win only where the kernel is arithmetic-bound: it is
 // enabled for the x kernel (FP64-issue-bound) and disabled for the strided
-// kernels, which are memory-bound and register-capped by __launch_bounds__ —
+// kernels, which are memory-bound and register-capped by __launch_bounds__,
 // enabling it there spilled 33 registers and cost 5% on the z solve.
 template <typename Float, int M, int L = ALGO3_W, bool PEEL_LAST = true>
 __device__ __forceinline__ void pop_pcr_warp_solve(
@@ -410,7 +410,7 @@ __device__ __forceinline__ void pop_pcr_warp_solve(
 
   // Save inter-tile coupling scalars, then strip them from the local block.
   // (For lane 0 the left couplings and for lane 31 the right couplings are
-  // already zero in the global arrays — same result.)
+  // already zero in the global arrays, same result.)
   Float cds0 = ds_r[0], cdl0 = dl_r[0], cds1 = ds_r[1];
   Float cdw6 = dw_r[M - 2], cdu7 = du_r[M - 1], cdw7 = dw_r[M - 1];
   ds_r[0] = Float(0); ds_r[1] = Float(0); dl_r[0] = Float(0);
@@ -526,7 +526,7 @@ __device__ __forceinline__ void pop_pcr_warp_solve(
   if (lane == L - 1) { g_ = Float(0); h_ = Float(0); }
 
   // -----------------------------------------------------------------------
-  // Phase 4: correction (all lanes) — solution replaces the RHS in x_r.
+  // Phase 4: correction (all lanes), solution replaces the RHS in x_r.
   // -----------------------------------------------------------------------
 #pragma unroll
   for (int j = 0; j < M; j++) {
@@ -536,7 +536,7 @@ __device__ __forceinline__ void pop_pcr_warp_solve(
 
 // L = lanes per system.  With L < 32 a warp holds 32/L independent systems
 // side by side, each PCR round is over L lanes instead of 32, and the reduced
-// solve — whose cost is a fixed ~200 FP64 slots per lane per round — is
+// solve, whose cost is a fixed ~200 FP64 slots per lane per round, is
 // amortised over the M = sys_size/L elements each lane owns.  Halving L both
 // removes a round and doubles M, so the PCR cost per element falls
 // superlinearly.  That is the dominant term in FP64.
@@ -580,11 +580,11 @@ __global__ void pentadsolver_batch_x_algo3_kernel_M(
   }
 
   // Phases 2-4 (local LU + spike solves + block-PCR + correction) are the
-  // shared warp-solve — see pop_pcr_warp_solve above.  x_r: RHS in, solution out.
+  // shared warp-solve, see pop_pcr_warp_solve above.  x_r: RHS in, solution out.
   // Peel the last round in FP64 only.  FP64 here is arithmetic-bound, so
   // trading registers for fewer instructions pays.  FP32 is already
   // memory-bound at ~93% of peak, where the same trade only adds register
-  // pressure — it cost 17% on the GTX 1080's FP32 x-solve when applied there.
+  // pressure, it cost 17% on the GTX 1080's FP32 x-solve when applied there.
   pop_pcr_warp_solve<Float, M, L, (sizeof(Float) == 8)>(
       lane_sys, ds_r, dl_r, d_r, du_r, dw_r, x_r);
 
@@ -633,7 +633,7 @@ static int device_fp64_ratio_denom() {
   cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev);
   switch (major * 10 + minor) {
     case 60: case 70: case 72: case 80: case 90:
-      cached = 2;  break;   // P100 / V100 / A100 / H100 — full-rate FP64
+      cached = 2;  break;   // P100 / V100 / A100 / H100, full-rate FP64
     case 86: case 87: case 89:
       cached = 64; break;   // consumer Ampere / Ada
     default:
@@ -648,7 +648,7 @@ static int device_fp64_ratio_denom() {
 // L is chosen BY PRECISION, because the two precisions are limited by
 // different resources:
 //   FP32 is memory-bound at 93% of peak, so redundant arithmetic is free and
-//     L=32 (the widest, shallowest partitioning) is right — reducing L there
+//     L=32 (the widest, shallowest partitioning) is right, reducing L there
 //     only lengthens the serial local sweep and costs time.
 //   FP64 is FP64-issue-bound, so the reduced solve dominates and a smaller L
 //     is a large win.  L=16 halves the per-element PCR cost versus L=32.
@@ -716,7 +716,7 @@ bool pentadsolver_batch_x_algo3(const Float *ds, const Float *dl,
 // Threads per block for Algorithm 1's strided kernels.  The kernel needs ~107
 // registers, so block size sets how many blocks fit per SM.  Swept at 256^3
 // FP64: 64 -> y 9.60 / z 9.53, 128 -> 9.63 / 9.58, 256 -> 9.85 / 9.71,
-// 512 -> 10.01 / 9.99.  64 wins, but by only ~0.3-0.5% and with a flat curve —
+// 512 -> 10.01 / 9.99.  64 wins, but by only ~0.3-0.5% and with a flat curve,
 // the kernel is bandwidth-bound, not occupancy-bound.  1024 exceeds the
 // per-block register file and is rejected at launch.
 constexpr int ALGO1_Y_BLOCK = 64;
@@ -872,7 +872,7 @@ static bool algo3_strided_launch(const Float *ds, const Float *dl,
           static_cast<int>(stride), static_cast<int>(run_len));
     }
     // A launch can still be rejected at runtime even though the shared-memory
-    // tile fits — most often when BSYS pushes threads-per-block x registers
+    // tile fits, most often when BSYS pushes threads-per-block x registers
     // past the per-block register file.  Report failure so the caller falls
     // back to a working kernel instead of silently leaving the system
     // unsolved.
@@ -944,7 +944,7 @@ __device__ __forceinline__ void fused_transpose_load_tile(
 }
 
 // ---------------------------------------------------------------------------
-// Algorithm 4: ADI-structure solver — precomputed shared factorization.
+// Algorithm 4: ADI-structure solver, precomputed shared factorization.
 // Restricted problem class, opt-in only (PENTA_XALGO / PENTA_YZALGO =
 // shared-fact); never selected by auto.
 //
@@ -1143,7 +1143,7 @@ __global__ void pentadsolver_batch_yz_algo4_kernel(
 enum class StridedDir { Middle, Outermost };   // y, z
 
 // ---------------------------------------------------------------------------
-// Executed-kernel record — what RAN, not what was asked for
+// Executed-kernel record, what RAN, not what was asked for
 // ---------------------------------------------------------------------------
 // A forced selector is not a guarantee.  Algorithm 3 returns false when its
 // (M, BSYS) template is not instantiated or its shared tile does not fit, and
@@ -1174,7 +1174,7 @@ static bool strided_algo_is(StridedDir dir, const char *name) {
 }
 
 // Returns true if Algorithm 4 handled this strided batch (only when
-// explicitly requested — restricted problem class, never chosen by auto).
+// explicitly requested, restricted problem class, never chosen by auto).
 template <typename Float>
 bool pentadsolver_batch_yz_algo4(const Float *ds, const Float *dl,
                                   const Float *d, const Float *du,
@@ -1326,7 +1326,7 @@ void pentadsolver_batch_outermost(const Float *__restrict__ ds,
   // --- z direction (outermost): stride N^2, run length N^2 ----------------
   constexpr StridedDir DIR = StridedDir::Outermost;
 
-  // Algorithm 4 (ADI-structure, shared coefficients) — explicit opt-in only.
+  // Algorithm 4 (ADI-structure, shared coefficients), explicit opt-in only.
   if (pentadsolver_batch_yz_algo4(ds, dl, d, du, dw, x, t_n_sys, t_sys_size,
                                    /*stride=*/t_n_sys, /*run_len=*/t_n_sys,
                                    t_scratch, DIR)) {
@@ -1338,7 +1338,7 @@ void pentadsolver_batch_outermost(const Float *__restrict__ ds,
   // AUTO-SELECTED for z in FP32: 4.38 ms vs Algorithm 1's 4.52 at 256^3 once
   // BSYS=16 widens the strided reads.  The margin is much smaller than on y
   // (27%) because stride N^2 puts every element row on its own DRAM page.
-  // FP64 stays on Algorithm 1 — the redundant arithmetic is compute-bound at
+  // FP64 stays on Algorithm 1, the redundant arithmetic is compute-bound at
   // the 1/64 FP64 rate and costs ~44 ms.
   const bool algo3_auto_z = (sizeof(Float) == 4) &&
                             std::strcmp(strided_algo_selector(DIR), "auto") == 0;
@@ -1377,7 +1377,7 @@ void pentadsolver_batch_middle(const Float *__restrict__ ds,
   // --- y direction (middle): stride N, runs of N adjacent systems ---------
   constexpr StridedDir DIR = StridedDir::Middle;
 
-  // Algorithm 4 (ADI-structure, shared coefficients) — explicit opt-in only.
+  // Algorithm 4 (ADI-structure, shared coefficients), explicit opt-in only.
   if (pentadsolver_batch_yz_algo4(ds, dl, d, du, dw, x,
                                    t_n_sys_in * t_n_sys_out, t_sys_size,
                                    /*stride=*/t_n_sys_in,
@@ -1389,7 +1389,7 @@ void pentadsolver_batch_middle(const Float *__restrict__ ds,
   // Algorithm 3 (register-resident POP-PCR, no scratch).
   // AUTO-SELECTED for y in FP32: measured 3.19 ms vs the legacy kernel's
   // 4.36 ms at 256^3 (7 array passes instead of 13, and the redundant
-  // arithmetic is nearly free in FP32).  FP64 stays on legacy — there the
+  // arithmetic is nearly free in FP32).  FP64 stays on legacy, there the
   // same redundancy is compute-bound at the 1/64 FP64 rate and costs ~44 ms.
   const bool algo3_auto_y = (sizeof(Float) == 4) &&
                             std::strcmp(strided_algo_selector(DIR), "auto") == 0;
@@ -1477,7 +1477,7 @@ void pentadsolver_gpsv_batch_x(const Float *ds, const Float *dl, const Float *d,
       note_kernel(0, "thomas-pcr");
       return;
     }
-    // Algorithm 4: ADI-structure solver (all systems share coefficients) —
+    // Algorithm 4: ADI-structure solver (all systems share coefficients),
     // explicit opt-in only, never auto (restricted problem class).
     if (std::strcmp(algo, "shared-fact") == 0 && sys_size % XT_C == 0) {
       note_kernel(0, "shared-fact");
@@ -1534,7 +1534,7 @@ void pentadsolver_gpsv_batch(const Float *ds, const Float *dl, const Float *d,
   const cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     std::fprintf(stderr,
-                 "[penta] solvedim %d launch FAILED: %s — output is invalid\n",
+                 "[penta] solvedim %d launch FAILED: %s, output is invalid\n",
                  t_solvedim, cudaGetErrorString(err));
   }
 }

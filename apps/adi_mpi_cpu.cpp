@@ -1,4 +1,4 @@
-// adi_mpi_cpu.cpp — 3-D ADI pentadiagonal solver, MPI CPU version
+// adi_mpi_cpu.cpp: 3-D ADI pentadiagonal solver, MPI CPU version
 //
 // Methodology mirror of apps/adi_cpu.cpp (which mirrors adi_cuda.cu), with
 // a 1-D MPI domain decomposition along z: mpi_dims = {1, 1, np}.  x- and
@@ -11,9 +11,9 @@
 // is the MAX across ranks (honest distributed convention).
 //
 // Correctness self-check: prints a global checksum (Allreduce of sum(x))
-// after the timed loop — must match across different np for the same N,
+// after the timed loop, must match across different np for the same N,
 // niters and precision (the MPI test suite upstream has thin coverage, so
-// this cross-np checksum is our correctness evidence at application scale).
+// this cross-np checksum is the correctness evidence at application scale).
 //
 // Usage:  mpirun -np P ./adi_mpi_cpu [N] [niters] [precision]
 
@@ -53,7 +53,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
 
     if (rank == 0) {
         printf("=========================================================\n");
-        printf("Pentadiagonal ADI — MPI CPU  (z-slab decomposition)\n");
+        printf("Pentadiagonal ADI, MPI CPU  (z-slab decomposition)\n");
         printf("Grid: %d x %d x %d   ranks: %d   threads/rank: %d\n",
                N, N, N, np, omp_get_max_threads());
         printf("Precision: %-6s  Warmup: %d iter   Timed: %d iter\n",
@@ -72,7 +72,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     // first/last two planes must carry zeroed sub/super coefficients exactly
     // as in the single-node app (the constant fill already provides interior
     // coupling; the MPI solver takes care of inter-rank coupling).  For x/y
-    // the solver zeroes per its internal convention — the constant-fill
+    // the solver zeroes per its internal convention, the constant-fill
     // matrix is diagonally dominant (|5| > 4) so the solve is well-posed.
 
     size_t buf_bytes = 0;

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# build.sh — configure + build the pentadiagonal solver with sane defaults.
+# build.sh: configure + build the pentadiagonal solver with sane defaults.
 #
 #   bash scripts/build.sh [gpu|gpu-mpi|cpu]        (default: gpu)
 #
 # For the GPU builds it auto-detects the CUDA architecture from nvidia-smi so
-# you do not have to know your GPU's compute capability.  Override anything:
+# the GPU's compute capability does not have to be known.  Override anything:
 #   CUDA_ARCH=80 bash scripts/build.sh gpu         # force A100
 #   JOBS=8       bash scripts/build.sh gpu
 set -euo pipefail
@@ -28,7 +28,7 @@ echo ">> preset=$PRESET  build_dir=$BUILD_DIR  jobs=$JOBS"
 EXTRA=()
 if [ "$PRESET" != "cpu" ]; then
   command -v nvcc >/dev/null 2>&1 || {
-    echo "!! nvcc not in PATH. Load your CUDA module (e.g. 'module load cuda') or"
+    echo "!! nvcc not in PATH. Load the CUDA module (e.g. 'module load cuda') or"
     echo "   add \$CUDA_HOME/bin to PATH, then re-run.  For a CPU-only build use: cpu"; exit 1; }
   ARCH="${CUDA_ARCH:-}"
   if [ -z "$ARCH" ] && command -v nvidia-smi >/dev/null 2>&1; then
@@ -39,8 +39,8 @@ if [ "$PRESET" != "cpu" ]; then
     echo ">> CUDA architecture: $ARCH"
     EXTRA+=("-DCMAKE_CUDA_ARCHITECTURES=$ARCH")
   else
-    echo ">> CUDA architecture: 'native' (no nvidia-smi / CUDA_ARCH). If you are on a"
-    echo "   login node without a GPU this WILL fail — re-run as: CUDA_ARCH=<cc> bash scripts/build.sh $PRESET"
+    echo ">> CUDA architecture: 'native' (no nvidia-smi / CUDA_ARCH). On a"
+    echo "   login node without a GPU this WILL fail, re-run as: CUDA_ARCH=<cc> bash scripts/build.sh $PRESET"
   fi
 fi
 

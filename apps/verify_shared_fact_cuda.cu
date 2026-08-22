@@ -1,10 +1,10 @@
-// verify_shared_fact_cuda.cu — correctness validator for the Shared-Factorisation
+// verify_shared_fact_cuda.cu: correctness validator for the Shared-Factorisation
 // (ADI-structure / shared-coefficient) GPU solver.
 //
 // Shared-Factorisation's assumption: all systems in a direction share the same
 // coefficients.  This tool builds exactly that case, but with coefficients
 // that VARY ALONG THE LINE (pseudo-random in i, replicated across systems)
-// so that any table-indexing bug is visible — a constant-everywhere fill
+// so that any table-indexing bug is visible, a constant-everywhere fill
 // would hide those.  The RHS is random PER SYSTEM.  It then:
 //   1. solves with the general-coefficient production path (auto),
 //   2. re-uploads the RHS and solves with Shared-Factorisation forced,

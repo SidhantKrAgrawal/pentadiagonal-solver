@@ -1,4 +1,4 @@
-// verify_scale_cpu.cpp — independent residual check for the CPU solver at
+// verify_scale_cpu.cpp: independent residual check for the CPU solver at
 // an arbitrary grid size N, used to gain confidence at sizes (320, 384)
 // that the fixed correctness test suite does not cover.
 //
@@ -7,7 +7,7 @@
 // the residual r_i = ds*x[i-2] + dl*x[i-1] + d*x[i] + du*x[i+1] + dw*x[i+2]
 // - b_i directly from the ORIGINAL coefficients and right-hand side
 // (independent of the solver), for INTERIOR rows only (i in [2, N-3] of
-// each line) — boundary-row special-casing is unchanged from N=256, where
+// each line), boundary-row special-casing is unchanged from N=256, where
 // it is already proven correct by the 201,388-assertion suite.
 //
 // Usage: ./verify_scale_cpu [N] [double|float]

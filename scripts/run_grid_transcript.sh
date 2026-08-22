@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_grid_transcript.sh — the grid study, recorded as a readable transcript.
+# run_grid_transcript.sh: the grid study, recorded as a readable transcript.
 #
 #   bash scripts/run_grid_transcript.sh [GPU_ITERS] [CPU_ITERS]
 #     defaults: 50 20
@@ -127,7 +127,7 @@ banner() {
 }
 
 # ===========================================================================
-# 1. CPU OpenMP — threads 1..6
+# 1. CPU OpenMP, threads 1..6
 # ===========================================================================
 CPUCSV="$OUT/cpu.csv"
 echo "N,precision,threads,x_ms,y_ms,z_ms,total_ms" > "$CPUCSV"
@@ -256,7 +256,7 @@ for N in $GRIDS; do for prec in double float; do
 done; done
 
 # Production dispatch: what a caller gets with no environment variable set.
-# Recorded separately because it is a CONFIGURATION, not an algorithm — its
+# Recorded separately because it is a CONFIGURATION, not an algorithm, its
 # x, y and z may come from three different kernels.
 echo ">> [+] auto dispatch (production default)"
 for N in $GRIDS; do for prec in double float; do

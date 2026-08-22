@@ -55,7 +55,7 @@ inline void transpose16x16_intrinsic(__m512 __restrict__ reg[16]) {
 // Not a true transpose:
 // 1 2 3 4 -> 1 5 2 6
 // 5 6 7 8 -> 3 6 4 8
-// But we fix it in the next pass
+// Fixed in the next pass
 #  pragma unroll
   for (int i = 0; i < 8; ++i) {
     tmp[2 * i]     = _mm512_unpacklo_ps(reg[2 * i], reg[2 * i + 1]);
@@ -76,8 +76,8 @@ inline void transpose16x16_intrinsic(__m512 __restrict__ reg[16]) {
   }
 
   // Transpose 2x2 blocks (block size is 8x8) within 16x16 matrix
-  // Similarly to the first pass the shuffle mess up the transpose but we will
-  // fix it in the next pass
+  // As in the first pass the shuffle messes up the transpose; fixed in the
+  // next pass
 #  pragma unroll
   for (int i = 0; i < 2; ++i) {
 #  pragma unroll

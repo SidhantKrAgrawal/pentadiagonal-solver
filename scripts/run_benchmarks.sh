@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_benchmarks.sh — reproduce the headline results from the paper/report.
+# run_benchmarks.sh: reproduce the headline results from the paper/report.
 # Runs the full ADI solver (x+y+z, one time step) on the GPU and the CPU and
 # prints a comparison.  Assumes the 'gpu' build exists (scripts/build.sh gpu).
 #

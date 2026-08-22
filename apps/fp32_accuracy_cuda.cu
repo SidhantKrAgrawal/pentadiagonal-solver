@@ -1,10 +1,10 @@
-// fp32_accuracy_cuda.cu — FP32-vs-FP64 accuracy study for the GPU pentadiagonal
+// fp32_accuracy_cuda.cu: FP32-vs-FP64 accuracy study for the GPU pentadiagonal
 // x-solver.
 //
 // The residual-only verify tools (verify_scale_*) measure BACKWARD error
 // (how well the returned x satisfies A x = b).  This tool additionally
 // measures FORWARD error: the deviation of the FP32 solution from an
-// INDEPENDENT double-precision reference, so we can quantify "how much
+// INDEPENDENT double-precision reference, so as to quantify "how much
 // accuracy does the FP32 speedup cost?" and whether that error grows with the
 // problem size N or with the algorithm choice (thomas-pcr POP-PCR's redundant
 // arithmetic vs plain Thomas).
@@ -15,7 +15,7 @@
 //     system (out-of-range boundary couplings are zeroed), so every row's
 //     residual (including the boundary rows) is meaningful.
 //   * The SAME coefficients (as stored in the chosen Float type) drive both
-//     the GPU solve and a host serial double-precision Thomas reference — so
+//     the GPU solve and a host serial double-precision Thomas reference, so
 //     the only difference measured is round-off, not a different problem.
 //   * Report, over a sample of lines:
 //       backward: max |A x - b| / |b|

@@ -83,7 +83,7 @@ static const char *strided_selector(const char *specific_name) {
 // the traffic model matches what really ran.
 //
 // An unrecognised selector falls through to the auto path inside the solver,
-// so it must resolve here too — otherwise the banner and the CSV would name a
+// so it must resolve here too, otherwise the banner and the CSV would name a
 // kernel that did not run, and array_passes_x() would apply the wrong traffic
 // model to it.
 static bool is_known_x_algo(const char *a) {
@@ -96,7 +96,7 @@ static const char *resolve_x_algo(const char *requested, bool is_fp32) {
         return requested;
     }
     if (is_fp32) { return "thomas-pcr"; }
-    // FP64 x is chosen from the device's FP64:FP32 ratio — Algorithm 3 wins
+    // FP64 x is chosen from the device's FP64:FP32 ratio, Algorithm 3 wins
     // wherever FP64 is not crippled, Algorithm 2 where it is.  This mirrors
     // device_fp64_ratio_denom() in pentadsolver_gpsv_batch_x; keep in step.
     int dev = 0;
@@ -123,7 +123,7 @@ static const char *resolve_strided_algo(const char *requested, bool is_fp32) {
 }
 
 static int array_passes_x(const char *algo) {
-    if (std::strcmp(algo, "naive")  == 0) { return 7;  } // nominal only — see note below
+    if (std::strcmp(algo, "naive")  == 0) { return 7;  } // nominal only, see note below
     if (std::strcmp(algo, "transpose")  == 0) { return 27; } // 6 fwd-transposed + solve + 1 bwd
     if (std::strcmp(algo, "thomas-pcr")  == 0) { return 7;  } // register-resident, no scratch
     if (std::strcmp(algo, "shared-fact") == 0) { return 4;  } // b in + x2 wr + x2 rd + x out
@@ -147,8 +147,8 @@ static bool traffic_model_is_meaningful(const char *algo) {
 // The solver records the kernel each direction ACTUALLY launched.  resolve_*()
 // above can only predict, and a prediction is not always right: Algorithm 3
 // declines a size whose template is not instantiated or whose shared tile does
-// not fit, and the solver then falls back.  Everything after the warm-up —
-// the traffic model, the report and the CSV — uses this, so a fallback is
+// not fit, and the solver then falls back.  Everything after the warm-up,
+// the traffic model, the report and the CSV, uses this, so a fallback is
 // recorded as what ran rather than as what was asked for.  0 = x, 1 = y, 2 = z.
 extern "C" const char *pentadsolver_kernel_that_ran(int dir);
 
@@ -175,7 +175,7 @@ static void run_one_iteration(pentadsolver_handle_t handle, Float *d_ds,
     }
 }
 
-// Pass A — nothing inserted between the solves: the honest end-to-end cost.
+// Pass A, nothing inserted between the solves: the honest end-to-end cost.
 template <typename Float>
 static void measure_end_to_end(pentadsolver_handle_t handle, Float *d_ds,
                                Float *d_dl, Float *d_d, Float *d_du,
@@ -212,7 +212,7 @@ static void measure_end_to_end(pentadsolver_handle_t handle, Float *d_ds,
     cudaEventDestroy(ev_stop);
 }
 
-// Pass B — per-direction events for the x/y/z breakdown.
+// Pass B, per-direction events for the x/y/z breakdown.
 template <typename Float>
 static void measure_per_direction(pentadsolver_handle_t handle, Float *d_ds,
                                   Float *d_dl, Float *d_d, Float *d_du,
@@ -308,7 +308,7 @@ static void print_direction_line(const char *label, double ms, int passes,
 }
 
 // ---------------------------------------------------------------------------
-// Templated ADI run — identical logic/timing methodology for double & float
+// Templated ADI run, identical logic/timing methodology for double & float
 // ---------------------------------------------------------------------------
 
 template <typename Float>
@@ -317,7 +317,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     // its steady boost clock quickly, but NOT on every card: a GTX 1080 takes
     // ~350 ms to ramp from idle, so with 5 warm-up loops the end-to-end pass
     // (which runs first) is measured partly at low clocks while the
-    // per-direction pass that follows is not — showing up as a spurious
+    // per-direction pass that follows is not, showing up as a spurious
     // "inter-kernel overhead" of up to 40%.  Raise it via PENTA_WARMUP when
     // the reported overhead shrinks as the iteration count grows, which is the
     // signature of a fixed startup cost rather than a real per-iteration gap.
@@ -351,7 +351,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     cudaGetDevice(&dev_id);
     cudaGetDeviceProperties(&dprop, dev_id);
     printf("=========================================================\n");
-    printf("Pentadiagonal ADI — GPU  (%s, sm_%d%d, CUDA %d.%d)\n",
+    printf("Pentadiagonal ADI, GPU  (%s, sm_%d%d, CUDA %d.%d)\n",
            dprop.name, dprop.major, dprop.minor,
            CUDART_VERSION / 1000, (CUDART_VERSION % 1000) / 10);
     printf("Grid: %d x %d x %d   (%zu elements)\n", N, N, N, n_total);
@@ -444,7 +444,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
            eff_z);
     {
         // A request that was not honoured is a silent measurement error unless
-        // it is said out loud — the run still produces a plausible-looking
+        // it is said out loud, the run still produces a plausible-looking
         // number, just for a different kernel.
         const char *req[3] = {req_x, req_y, req_z};
         const char *got[3] = {eff_x, eff_y, eff_z};
@@ -501,7 +501,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     printf("\n");
     printf("  Inter-kernel overhead (end-to-end - sum of parts): %.3f ms"
            " (%.1f%% of end-to-end)\n", overhead, overhead_pct);
-    printf("  NOTE: sum(x+y+z) is NOT the iteration cost — it omits the gaps\n"
+    printf("  NOTE: sum(x+y+z) is NOT the iteration cost, it omits the gaps\n"
            "        above.  Quote the end-to-end wall clock as the total.\n");
 
     // Kept for backward compatibility with scripts that grep this token; it
@@ -519,7 +519,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
 
     // CPU reference, per precision.  NOTE: these were measured with the
     // OpenMP+AVX2 CPU library at its saturated multi-core throughput
-    // (6 threads; scaling saturates at T=4 — the i5-9500 is memory-bound
+    // (6 threads; scaling saturates at T=4, the i5-9500 is memory-bound
     // at ~20 GB/s STREAM triad).  These are per-direction figures from a
     // separate tool, so their "total" is a sum and carries the same caveat
     // as above; it is shown only as an order-of-magnitude reference.
@@ -529,7 +529,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     // taken at.  (Previously they were printed for every N, which produced a
     // meaningless "68.79x speedup" at N=64.)
     if (N != 256) {
-        printf("\nCPU baseline: not shown — the built-in reference was measured"
+        printf("\nCPU baseline: not shown, the built-in reference was measured"
                " at 256^3 on cobra-01\n  (Intel i5-9500) and does not apply to"
                " %d^3.  Measure this machine with apps/adi_cpu.\n", N);
         pentadsolver_destroy(&handle);

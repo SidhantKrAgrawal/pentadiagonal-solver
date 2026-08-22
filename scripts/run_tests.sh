@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# run_tests.sh — run the correctness suites from the correct working directory
+# run_tests.sh: run the correctness suites from the correct working directory
 # (the test binaries load reference data from ./files, which is why they must
-# run from the repository root — this script handles that for you).
+# run from the repository root, which is what this script handles).
 #
 #   bash scripts/run_tests.sh [gpu|gpu-mpi|cpu]     (default: gpu)
 set -euo pipefail
@@ -25,7 +25,7 @@ if [ -x "$BUILD_DIR/test/cpu/tests" ]; then
   echo "=== CPU correctness suite (OMP_NUM_THREADS=${OMP_NUM_THREADS:-all}) ==="
   "$BUILD_DIR/test/cpu/tests"; ran=1
 fi
-[ "$ran" = 1 ] || { echo "No test binaries found in $BUILD_DIR — build first (scripts/build.sh $PRESET)."; exit 1; }
+[ "$ran" = 1 ] || { echo "No test binaries found in $BUILD_DIR, build first (scripts/build.sh $PRESET)."; exit 1; }
 
 echo
 echo "Randomized validators for the new GPU kernels (independent of the suite):"

@@ -62,7 +62,7 @@ if (BUILD_FOR_CPU)
     target_link_libraries(app_cpu_orig PRIVATE  pentadsolver::project_warnings
     pentadsolver::project_options pentadsolver::pentad_orig_cpu OpenMP::OpenMP_CXX)
 
-    # 3-D ADI CPU app — methodology mirror of app_cuda for fair CPU vs GPU
+    # 3-D ADI CPU app, methodology mirror of app_cuda for fair CPU vs GPU
     # end-to-end comparison (thread count set at runtime via OMP_NUM_THREADS).
     add_executable(adi_cpu adi_cpu.cpp)
     target_compile_definitions(adi_cpu PRIVATE -DFPPREC=1)
@@ -81,7 +81,7 @@ if (BUILD_FOR_CPU)
   endif (BUILD_FOR_SN)
   if (BUILD_FOR_MPI)
     find_package(MPI REQUIRED)
-    # 3-D ADI MPI CPU app — z-slab decomposition; methodology mirror of
+    # 3-D ADI MPI CPU app, z-slab decomposition; methodology mirror of
     # adi_cpu for MPI scaling studies (hybrid via OMP_NUM_THREADS per rank).
     add_executable(adi_mpi_cpu adi_mpi_cpu.cpp)
     target_compile_definitions(adi_mpi_cpu PRIVATE -DFPPREC=1)
@@ -138,7 +138,7 @@ if (BUILD_FOR_CUDA)
 
     # Counter-free roofline probe.  Measures this GPU's FP64 issue rate and the
     # achievable memory floor for the solver's 7-array traffic, using only
-    # timing — no ncu, no nsys metrics, no privileged counters.
+    # timing, no ncu, no nsys metrics, no privileged counters.
     add_executable(roofline_probe_cuda roofline_probe_cuda.cu)
     target_include_directories(roofline_probe_cuda PRIVATE ${_project_options_SOURCE_DIR}/include)
     target_link_libraries(roofline_probe_cuda PRIVATE

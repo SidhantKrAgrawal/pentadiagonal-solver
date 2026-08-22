@@ -1,4 +1,4 @@
-// roofline_probe.cu — measure a GPU's FP64 issue rate and a kernel's memory
+// roofline_probe.cu: measure a GPU's FP64 issue rate and a kernel's memory
 // floor WITHOUT any hardware counters.
 //
 // Method ("arithmetic dial"): run a kernel with exactly the memory traffic of
@@ -7,9 +7,9 @@
 //
 //   time(K) = memory_floor + K * seconds_per_FMA_per_element
 //
-// The INTERCEPT is the achievable memory time for that exact traffic — the
+// The INTERCEPT is the achievable memory time for that exact traffic, the
 // number the array-pass model only estimates.  The SLOPE is the machine's FP64
-// issue rate — the 0.2360 ms/slot constant the SASS cost model assumes.
+// issue rate, the 0.2360 ms/slot constant the SASS cost model assumes.
 // Neither requires ncu.
 //
 // Four independent accumulators keep the FMAs issue-bound rather than
@@ -34,7 +34,7 @@ __global__ void probe(const double *__restrict__ a0, const double *__restrict__ 
     double v0 = a0[i], v1 = a1[i], v2 = a2[i], v3 = a3[i], v4 = a4[i], v5 = a5[i];
     // Seed with all SIX inputs.  If v4/v5 only appeared inside the K-loop the
     // compiler would delete their loads at K=0 and the "memory floor" would be
-    // measured on 5 arrays instead of 7 — which showed up as an impossible
+    // measured on 5 arrays instead of 7, which showed up as an impossible
     // 293 GB/s, above the card's peak.  Two extra adds is a cheap guarantee.
     double s0 = v0 + v4, s1 = v1 + v5, s2 = v2, s3 = v3;
     const double c = 1.0000000001;

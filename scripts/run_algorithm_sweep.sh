@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_algorithm_sweep.sh — per-direction algorithm comparison + end-to-end total.
+# run_algorithm_sweep.sh: per-direction algorithm comparison + end-to-end total.
 #
 #   bash scripts/run_algorithm_sweep.sh [N] [ITERS] [double|float|both] [--with-restricted]
 #     defaults: 256 50 both
@@ -12,13 +12,13 @@
 # also cannot be attributed to a single algorithm, because each direction runs
 # its own kernel.  So:
 #
-#   PHASE 1 — characterise each direction INDEPENDENTLY.  For every algorithm
+#   PHASE 1: characterise each direction INDEPENDENTLY.  For every algorithm
 #     with a kernel for that direction, measure its solve time and achieved
 #     bandwidth while the other two directions are held on a fixed baseline.
 #     Holding the others constant makes this a controlled experiment, so
 #     differences between rows are attributable to the one algorithm varied.
 #
-#   PHASE 2 — compose the per-direction winners into one configuration and
+#   PHASE 2: compose the per-direction winners into one configuration and
 #     measure the TRUE end-to-end wall time.  That number is a property of the
 #     configuration, not of any single algorithm, and is labelled as such.
 #
@@ -65,7 +65,7 @@ esac
 # kernel for that direction.
 #
 # Algorithm 1's strided form is the "naive" kernel: thread-per-system Thomas
-# with global scratch — the SAME algorithm as the naive x kernel, just walking
+# with global scratch, the SAME algorithm as the naive x kernel, just walking
 # a stride.  It is labelled Algorithm 1 here rather than left nameless.
 #
 # Algorithm 2 is x-only BY DESIGN: it exists to repair the x-direction's
@@ -136,7 +136,7 @@ for prec in $PRECISIONS; do
 
   # ---------------- matrix ----------------
   echo
-  echo "PHASE 1 — solve time per direction (ms), each measured with the other"
+  echo "PHASE 1: solve time per direction (ms), each measured with the other"
   echo "          two directions held fixed"
   echo
   printf "  %-4s %-28s %10s %10s %10s\n" "Alg" "" "x" "y" "z"
@@ -153,7 +153,7 @@ for prec in $PRECISIONS; do
   for dir in x y z; do
     BEST_T[$dir]=""; BEST_A[$dir]=""
     for a in $ALGO_NUMS; do
-      [ "$a" = "4" ] && continue          # restricted class — not a general solver
+      [ "$a" = "4" ] && continue          # restricted class, not a general solver
       v="${T[$a,$dir]:-}"
       [ -n "$v" ] || continue
       if [ -z "${BEST_T[$dir]}" ] || awk "BEGIN{exit !($v < ${BEST_T[$dir]})}"; then
@@ -170,7 +170,7 @@ for prec in $PRECISIONS; do
 
   # ---------------- Phase 2 ----------------
   echo
-  echo "PHASE 2 — true end-to-end wall time of one ADI iteration"
+  echo "PHASE 2: true end-to-end wall time of one ADI iteration"
   echo
   printf "  %-42s %11s %11s %7s\n" "configuration" "e2e (ms)" "sum x+y+z" "gap"
   printf "  %s\n" "-------------------------------------------------------------------------"

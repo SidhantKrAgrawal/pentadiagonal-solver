@@ -58,7 +58,7 @@ void pack_first_rows_forward(Float ds0, std::array<Float, full_line_l> &r0,
   r1[w] = r1[w] / r1[d];
   r1[x] = r1[x] / r1[d];
   // r0 - tmp * r1
-  //  note: we add ds to the beginning of the array so indexing will change
+  //  note: ds is added to the beginning of the array so indexing will change
   Float u0_tmp         = r0[d];
   r0[d]                = r0[l] - u0_tmp * r1[l]; // ddi
   sndbuf[2 * s]        = ds0 / r0[d];
@@ -110,8 +110,8 @@ void gpsv_forward_x(const Float *ds, const Float *dl, const Float *d,
   assert(t_sys_size >= 4); // NOLINT
   // row 0:
   // M[0, 1] cannot be shifted until the end
-  // So we add a temp value to the line and shift it like row 1 until the end
-  // Finally we will shift du as well and add back ds[0]
+  // So a temp value is added to the line and shifted like row 1 until the end
+  // Finally du is shifted as well and ds[0] added back
   std::array<Float, full_line_l> r0 = {dl[0], d[0], du[0], dw[0], 0, x[0]};
   // row 1
   std::array<Float, full_line_l> r1 = {ds[1], dl[1], d[1], du[1], dw[1], x[1]};
@@ -190,8 +190,8 @@ void gpsv_forward_strided(const Float *ds, const Float *dl, const Float *d,
   assert(t_sys_size >= 4); // NOLINT
   // row 0:
   // M[0, 1] cannot be shifted until the end
-  // So we add a temp value to the line and shift it like row 1 until the end
-  // Finally we will shift du as well and add back ds[0]
+  // So a temp value is added to the line and shifted like row 1 until the end
+  // Finally du is shifted as well and ds[0] added back
   std::array<Float, full_line_l> r0 = {dl[0], d[0], du[0], dw[0], 0, x[0]};
   // row 1
   std::array<Float, full_line_l> r1 = {ds[t_stride], dl[t_stride], d[t_stride],

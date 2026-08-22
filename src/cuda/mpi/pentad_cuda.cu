@@ -83,7 +83,7 @@ __device__ void pack_first_rows_forward(Float ds0, Float *r0, Float *r1,
   r1[w] = r1[w] / r1[d];
   r1[x] = r1[x] / r1[d];
   // r0 - tmp * r1
-  //  note: we add ds to the beginning of the array so indexing will change
+  //  note: ds is added to the beginning of the array so indexing will change
   Float u0_tmp                               = r0[d];
   r0[d]                                      = r0[l] - u0_tmp * r1[l]; // ddi
   sndbuf[t_stride_ws * 2 * s + sys_id]       = ds0 / r0[d];
@@ -108,8 +108,8 @@ gpsv_forward_x(const Float *__restrict__ ds, const Float *__restrict__ dl,
                Float *__restrict__ top, Float *__restrict__ bottom,
                size_t sys_idx, size_t t_stride_ws, size_t t_sys_size) {
   constexpr int n_row_nonzeros = 6;
-  // So we add a temp value to the line and shift it like row 1 until the end
-  // Finally we will shift du as well and add back ds[0]
+  // So a temp value is added to the line and shifted like row 1 until the end
+  // Finally du is shifted as well and ds[0] added back
   Float r0[n_row_nonzeros] = {dl[0], d[0], du[0], dw[0], 0, x[0]};
   Float r1[n_row_nonzeros] = {ds[1], dl[1], d[1], du[1], dw[1], x[1]};
   // row 2 - normalise -- 0
@@ -178,8 +178,8 @@ gpsv_forward_strided(const Float *__restrict__ ds, const Float *__restrict__ dl,
                      size_t sys_idx, size_t t_stride, size_t t_stride_ws,
                      size_t t_sys_size) {
   constexpr int n_row_nonzeros = 6;
-  // So we add a temp value to the line and shift it like row 1 until the end
-  // Finally we will shift du as well and add back ds[0]
+  // So a temp value is added to the line and shifted like row 1 until the end
+  // Finally du is shifted as well and ds[0] added back
   Float r0[n_row_nonzeros] = {dl[0], d[0], du[0], dw[0], 0, x[0]};
   Float r1[n_row_nonzeros] = {ds[t_stride], dl[t_stride], d[t_stride],
                               du[t_stride], dw[t_stride], x[t_stride]};

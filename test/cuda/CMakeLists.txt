@@ -9,8 +9,8 @@ target_link_libraries(
 target_include_directories(cuda_tests PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_cuda(cuda_tests)
 
-# automatically discover tests that are defined in catch based test files you can modify the unittests. Set TEST_PREFIX
-# to whatever you want, or use different for different binaries
+# automatically discover tests defined in catch based test files, the unittests can be modified. Set TEST_PREFIX
+# as needed, or use a different one per binary
 catch_discover_tests(
   cuda_tests
   TEST_PREFIX

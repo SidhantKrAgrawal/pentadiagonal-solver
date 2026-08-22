@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""build_grid_report.py — assemble the grid study into one .txt deliverable.
+"""build_grid_report.py: assemble the grid study into one .txt deliverable.
 
     python3 scripts/build_grid_report.py <stamp> <out.txt>
 
@@ -68,7 +68,7 @@ def hr(c="=", n=100):
 
 def cpu_tables(data, w):
     w(hr())
-    w("TABLE 1 — CPU BASELINE: OpenMP thread scaling (ms per ADI iteration)")
+    w("TABLE 1: CPU BASELINE, OpenMP thread scaling (ms per ADI iteration)")
     w(hr())
     w("")
     w("Total is the sum of the three directional sweeps (the CPU path has no")
@@ -107,7 +107,7 @@ def gpu_rows(data, host, N, prec, algo):
 
 def gpu_tables(data, w):
     w(hr())
-    w("TABLE 2 — GPU ALGORITHMS: end-to-end total and per-axis breakdown (ms/iteration)")
+    w("TABLE 2: GPU ALGORITHMS: end-to-end total and per-axis breakdown (ms/iteration)")
     w(hr())
     w("")
     w("TOTAL is the end-to-end wall clock for one full ADI iteration (Pass A).")
@@ -158,7 +158,7 @@ def gpu_tables(data, w):
 
 def lanes_table(data, w):
     w(hr())
-    w("TABLE 3 — ALGORITHM 3 (Hybrid Thomas-PCR): lane sweep")
+    w("TABLE 3: ALGORITHM 3 (Hybrid Thomas-PCR): lane sweep")
     w(hr())
     w("")
     w("Lanes = threads cooperating on one system.  Only instantiated (N, lanes)")
@@ -228,7 +228,7 @@ def label(algo, lanes):
 
 def winners(data, w):
     w(hr())
-    w("TABLE 4 — BEST ALGORITHM PER AXIS  (the headline result)")
+    w("TABLE 4: BEST ALGORITHM PER AXIS  (the headline result)")
     w(hr())
     w("")
     w("Per machine, per precision, per grid: the fastest kernel for each of the")
@@ -239,7 +239,7 @@ def winners(data, w):
     w("the same five coefficients, which an ADI sweep with constant coefficients")
     w("does but a general batched solve does not.  It is therefore not comparable")
     w("with Algorithms 1-3 on capability, only on speed for that special case:")
-    w("  4a  best of ALL FOUR         -- valid if your problem has ADI structure")
+    w("  4a  best of ALL FOUR         -- valid if the problem has ADI structure")
     w("  4b  best of ALGORITHMS 1-3   -- the general-purpose answer")
     w("A row is credited for an axis only if its kernel actually ran in that")
     w("direction, so Global-Transpose is ranked for x only, and a row whose z")
@@ -249,7 +249,7 @@ def winners(data, w):
     for tag, pool, title in (("4a", ALGOS, "best of all four algorithms"),
                              ("4b", GENERAL, "best general-purpose (Algorithms 1-3 only)")):
         w("  " + hr("=", 96))
-        w("  TABLE %s — %s" % (tag, title.upper()))
+        w("  TABLE %s, %s" % (tag, title.upper()))
         w("  " + hr("=", 96))
         for host in sorted(data):
             for prec in ("double", "float"):
@@ -297,7 +297,7 @@ def winners(data, w):
 
 def fallbacks(data, w):
     w(hr())
-    w("TABLE 5 — RUNS WHERE THE REQUESTED KERNEL DID NOT RUN, OR THE RUN FAILED")
+    w("TABLE 5: RUNS WHERE THE REQUESTED KERNEL DID NOT RUN, OR THE RUN FAILED")
     w(hr())
     w("")
     any_row = False
@@ -314,7 +314,7 @@ def fallbacks(data, w):
                    r["algo"], r["x_kernel"], r["y_kernel"], r["z_kernel"]))
                 any_row = True
     if not any_row:
-        w("  (none — every requested kernel ran, every run completed)")
+        w("  (none, every requested kernel ran, every run completed)")
     w("")
     w("  Why this table exists: a fallback does not fail, it produces a perfectly")
     w("  plausible number for a DIFFERENT kernel.  Before the solver was made to")
@@ -329,11 +329,11 @@ def fallbacks(data, w):
 
 def cpu_vs_gpu(data, w):
     w(hr())
-    w("TABLE 6 — GPU vs BEST CPU (best GPU total over best CPU total, both tuned)")
+    w("TABLE 6: GPU vs BEST CPU (best GPU total over best CPU total, both tuned)")
     w(hr())
     w("")
     w("Two speedups, because they answer different questions:")
-    w("  GENERAL   best of Algorithms 1-3 vs the CPU library — both solve the")
+    w("  GENERAL   best of Algorithms 1-3 vs the CPU library, both solve the")
     w("            general problem, so this is the like-for-like number and the")
     w("            one to quote as 'the GPU speedup'.")
     w("  ADI-CLASS best of all four (i.e. Algorithm 4) vs the same CPU baseline.")
@@ -385,7 +385,7 @@ def one_liners(data, w, picks):
         return min(f(r[key]) for r in rows) if rows else float("nan")
 
     w(hr())
-    w("ANALYSIS — ONE LINE PER ALGORITHM")
+    w("ANALYSIS: ONE LINE PER ALGORITHM")
     w(hr())
     w("")
     w("(all figures 256^3 unless stated; cobra-01 = RTX 3050 sm_86, FP64 at 1/64")
@@ -399,11 +399,11 @@ def one_liners(data, w, picks):
     w("  Uncoalesced x-solve dominates everything: x = %.1f ms vs y/z %.1f/%.1f ms"
       % (c("256", "double", "naive", "x_ms"), c("256", "double", "naive", "y_ms"),
          c("256", "double", "naive", "z_ms")))
-    w("  on cobra FP64 — %.1fx a single strided direction, %.0f%% of the whole"
+    w("  on cobra FP64, %.1fx a single strided direction, %.0f%% of the whole"
       % (c("256", "double", "naive", "x_ms") / c("256", "double", "naive", "y_ms"),
          100.0 * c("256", "double", "naive", "x_ms") /
          c("256", "double", "naive", "e2e_wall_ms")))
-    w("  iteration — because a thread-per-system walk along x reads a full cache")
+    w("  iteration, because a thread-per-system walk along x reads a full cache")
     w("  sector to use one element of it.")
     w("  Its y/z are respectable, though: it is a bad x-kernel, not a bad kernel.")
     w("")
@@ -412,7 +412,7 @@ def one_liners(data, w, picks):
     w("  Fixes exactly that: x %.1f -> %.1f ms on cobra FP64 (%.1fx) by transposing"
       % (c("256", "double", "naive", "x_ms"), c("256", "double", "transpose", "x_ms"),
          c("256", "double", "naive", "x_ms") / c("256", "double", "transpose", "x_ms")))
-    w("  into a coalesced layout, and it pays 27 array passes to do it — about half")
+    w("  into a coalesced layout, and it pays 27 array passes to do it, about half")
     w("  the remaining x-time is the transpose itself, not the solve.  Scales")
     w("  cleanly to N=384 and is the FP64 x-default on the 1/64-rate card.")
     w("")
@@ -423,17 +423,17 @@ def one_liners(data, w, picks):
     w("  cobra) but FP64 x = %.1f ms, because its ~5x redundant arithmetic is free"
       % c("256", "double", "thomas-pcr", "x_ms"))
     w("  in FP32 and compute-bound at 1/64 FP64.  On panda's 1/32 FP64 the same")
-    w("  kernel costs %.1f ms — the ratio tracks the hardware, not the algorithm."
+    w("  kernel costs %.1f ms, the ratio tracks the hardware, not the algorithm."
       % p("256", "double", "thomas-pcr", "x_ms"))
     w("  It is an x-specialist: its FP64 y/z (%.0f/%.0f ms) lose to naive's %.0f/%.0f."
       % (c("256", "double", "thomas-pcr", "y_ms"), c("256", "double", "thomas-pcr", "z_ms"),
          c("256", "double", "naive", "y_ms"), c("256", "double", "naive", "z_ms")))
     w("")
-    w("  LANES (Table 3) — the tuning knob, and it is architecture-dependent:")
+    w("  LANES (Table 3), the tuning knob, and it is architecture-dependent:")
     w("    FP64: cobra prefers L=8 (%.1f vs %.1f ms at L=16), panda prefers L=16"
       % (c("256", "double", "thomas-pcr", "x_ms", "8"),
          c("256", "double", "thomas-pcr", "x_ms", "16")))
-    w("          (%.1f vs %.1f at L=8) — sm_86's 128 KB unified L1/shared absorbs"
+    w("          (%.1f vs %.1f at L=8), sm_86's 128 KB unified L1/shared absorbs"
       % (p("256", "double", "thomas-pcr", "x_ms", "16"),
          p("256", "double", "thomas-pcr", "x_ms", "8")))
     w("          the register spilling that L=8 causes; Pascal's does not.")
@@ -441,15 +441,15 @@ def one_liners(data, w, picks):
       % (c("256", "float", "thomas-pcr", "x_ms", "32"),
          p("256", "float", "thomas-pcr", "x_ms", "32"),
          c("256", "float", "thomas-pcr", "x_ms", "8")))
-    w("          on cobra — a 5x penalty for the wrong knob at the same N.")
+    w("          on cobra, a 5x penalty for the wrong knob at the same N.")
     w("    => the lane count should be chosen by (architecture, precision), not by")
     w("       precision alone as the current default does.")
     w("")
 
     w("ALGO 4  Shared-Factorisation")
-    w("  Fastest everywhere it applies, by a wide margin — %.2f ms total on cobra"
+    w("  Fastest everywhere it applies, by a wide margin, %.2f ms total on cobra"
       % c("256", "double", "shared-fact", "e2e_wall_ms"))
-    w("  FP64 against Global-Transpose's %.1f (%.1fx) — because it moves 4 arrays"
+    w("  FP64 against Global-Transpose's %.1f (%.1fx), because it moves 4 arrays"
       % (c("256", "double", "transpose", "e2e_wall_ms"),
          c("256", "double", "transpose", "e2e_wall_ms") /
          c("256", "double", "shared-fact", "e2e_wall_ms")))
@@ -459,7 +459,7 @@ def one_liners(data, w, picks):
     w("  the right answer for constant-coefficient ADI and inapplicable otherwise.")
     w("  It is also the only algorithm whose FP64 and FP32 times are close (%.2f vs"
       % c("256", "double", "shared-fact", "e2e_wall_ms"))
-    w("  %.2f, %.2fx) — at 4 arrays it is so bandwidth-lean that halving the word"
+    w("  %.2f, %.2fx), at 4 arrays it is so bandwidth-lean that halving the word"
       % (c("256", "float", "shared-fact", "e2e_wall_ms"),
          c("256", "double", "shared-fact", "e2e_wall_ms") /
          c("256", "float", "shared-fact", "e2e_wall_ms")))
@@ -470,14 +470,14 @@ def one_liners(data, w, picks):
     w("  Scaling stops at 3-4 threads in FP64 on both machines (~1.8x from 6 cores)")
     w("  and only reaches ~2.7-3.0x in FP32: the solve is memory-bound and one or")
     w("  two cores already saturate the DRAM controller.  FP32 scales further than")
-    w("  FP64 for exactly that reason — half the bytes per element.  z is always the")
+    w("  FP64 for exactly that reason, half the bytes per element.  z is always the")
     w("  slowest direction (stride N^2 defeats the cache), which is the mirror image")
     w("  of the GPU, where x is the problem.")
     w("")
 
     w("CROSS-MACHINE")
     w("  The GTX 1080 wins in FP64 (1/32 rate, 289 GB/s) and the RTX 3050 wins in")
-    w("  FP32 — the same kernels, ranked differently by the two cards' FP64:FP32")
+    w("  FP32, the same kernels, ranked differently by the two cards' FP64:FP32")
     w("  ratios.  This is the dissertation's central claim reproduced at four grid")
     w("  sizes rather than one: the right algorithm is a property of the hardware,")
     w("  not of the problem.")
@@ -493,7 +493,7 @@ def next_run(data, w, picks):
     once the inter-kernel gaps are paid for real.
     """
     w(hr())
-    w("NEXT RUN — RECOMMENDED PER-DIRECTION CONFIGURATION")
+    w("NEXT RUN: RECOMMENDED PER-DIRECTION CONFIGURATION")
     w(hr())
     w("")
     w("Table 4's 'per-axis-best sum' is arithmetic on three separately measured")
@@ -538,7 +538,7 @@ def main():
     w = lines.append
 
     w(hr("#"))
-    w("# PENTADIAGONAL ADI SOLVER — FULL GRID / PRECISION / ALGORITHM / MACHINE STUDY")
+    w("# PENTADIAGONAL ADI SOLVER, FULL GRID / PRECISION / ALGORITHM / MACHINE STUDY")
     w(hr("#"))
     w("")
     w("Generated: %s" % __import__("datetime").datetime.now().isoformat(timespec="seconds"))
@@ -577,14 +577,14 @@ def main():
 
     w("")
     w(hr("#"))
-    w("# PART A — FULL RUN TRANSCRIPT")
+    w("# PART A: FULL RUN TRANSCRIPT")
     w(hr("#"))
     for host in sorted(data):
         w(data[host]["transcript"])
 
     w("")
     w(hr("#"))
-    w("# PART B — SUMMARY TABLES AND ANALYSIS")
+    w("# PART B: SUMMARY TABLES AND ANALYSIS")
     w(hr("#"))
     w("")
     for host in sorted(data):

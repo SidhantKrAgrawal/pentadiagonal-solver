@@ -2,7 +2,7 @@ option(BUILD_BENCHMARKS "Build the micro-benchmarks (Google Benchmark)" ON)
 
 if(BUILD_BENCHMARKS)
   # Use an installed Google Benchmark if present; otherwise fetch it at
-  # configure time (needs internet — see README). Replaces a hard-coded
+  # configure time (needs internet, see README). Replaces a hard-coded
   # personal install path. Disable the whole target with -DBUILD_BENCHMARKS=OFF.
   find_package(benchmark QUIET)
   if(NOT benchmark_FOUND)

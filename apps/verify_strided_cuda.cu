@@ -1,4 +1,4 @@
-// verify_strided_cuda.cu — correctness validator for the strided (y, z)
+// verify_strided_cuda.cu: correctness validator for the strided (y, z)
 // direction kernels.
 //
 // The fixed Catch2 suite only exercises the default auto dispatch, which uses

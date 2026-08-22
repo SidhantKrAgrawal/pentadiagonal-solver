@@ -7,7 +7,7 @@
 # Written to be run by someone who has not seen this code before and does not
 # want to debug it.  It configures, builds, checks correctness, measures the
 # machine's own memory/compute roofline, runs the full algorithm sweep, writes
-# a summary you can read without the raw data, and tars the lot.
+# a summary readable without the raw data, and tars the lot.
 #
 # Nothing is interactive.  Nothing is silently skipped: every step that fails
 # is recorded in the CSV and the summary with the reason, and the run carries
@@ -115,10 +115,10 @@ fi
 # node cannot build sm_90, and would fail the whole run over an architecture
 # that machine does not even have.  Filtering here is the difference between
 # "it worked" and an email exchange about an nvcc error code.
-# What GPU can we actually see right now?  If this node has one, its compute
+# What GPU is actually visible right now?  If this node has one, its compute
 # capability is folded into the build list unconditionally -- a binary that
 # cannot run on the machine that built it is the likeliest way for this script
-# to waste your time.
+# to waste time.
 VISIBLE_CC=""
 if command -v nvidia-smi >/dev/null 2>&1; then
   VISIBLE_CC="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
@@ -147,7 +147,7 @@ if command -v nvcc >/dev/null 2>&1 && [ "$CUDA_ARCH" != "native" ]; then
     IFS="$OLDIFS"
     [ -n "$DROPPED" ] && say "note: this nvcc cannot target compute capability$DROPPED -- dropped (it supports: $SUPPORTED)"
 
-    # If the architecture we just dropped is the architecture of the GPU in
+    # If the architecture just dropped is the architecture of the GPU in
     # THIS node, stop now and say why.  CUDA 13 removed Volta (sm_70), so a
     # V100 node with CUDA 13 loaded would otherwise build a binary that cannot
     # launch a single kernel, failing later with a runtime error that reads
@@ -177,8 +177,8 @@ if command -v nvcc >/dev/null 2>&1 && [ "$CUDA_ARCH" != "native" ]; then
   fi
 fi
 
-# 00_environment.txt was written before the filtering above, so record what we
-# are ACTUALLY building for -- otherwise the summary reports the request rather
+# 00_environment.txt was written before the filtering above, so record what is
+# ACTUALLY being built for -- otherwise the summary reports the request rather
 # than the result (e.g. "70;90" when sm_70 was dropped and sm_86 added).
 echo "cuda arch built: $CUDA_ARCH" >> "$OUT/00_environment.txt"
 
@@ -226,13 +226,13 @@ else
       say ">>   nvcc on PATH: $(command -v nvcc 2>/dev/null || echo '<none>')"
       say ">> Verify the toolkit is usable, then re-run:"
       say ">>   echo 'int main(){}' > /tmp/t.cu && nvcc /tmp/t.cu -o /tmp/t && echo TOOLKIT-OK"
-      say ">> If your site offers several CUDA modules, try another (12.x is safest)."
+      say ">> If the site offers several CUDA modules, try another (12.x is safest)."
     fi
     # Leave no poisoned cache behind: a re-run after fixing the environment
     # must not reproduce this same error from stale cmake state.
     rm -rf "$BUILD/CMakeCache.txt" "$BUILD/CMakeFiles"
     say ""
-    say ">> The cmake cache has been reset, so once the above is fixed you can simply"
+    say ">> The cmake cache has been reset, so once the above is fixed simply"
     say ">> re-run this script -- it will not repeat this error from stale state."
     exit 1
   fi
@@ -319,7 +319,7 @@ if [ -x "$VERIFY" ]; then
 fi
 if [ "$CORRECT_OK" != "1" ]; then
   say ""; say "FATAL: correctness failed.  Stopping rather than producing numbers that mean nothing."
-  say "Please send $OUT/logs/tests.txt and $OUT/logs/verify.txt and we will fix it."
+  say "Please send $OUT/logs/tests.txt and $OUT/logs/verify.txt for diagnosis."
   exit 2
 fi
 say "correctness OK"

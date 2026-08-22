@@ -70,7 +70,7 @@ set(ENABLE_DEVELOPER_MODE
     FALSE
     CACHE BOOL "Enable 'developer mode' (sanitizers, static analysis, warnings-as-errors)")
 
-# Change this to false if you want to disable warnings_as_errors in developer mode
+# Set to false to disable warnings_as_errors in developer mode
 set(OPT_WARNINGS_AS_ERRORS_DEVELOPER_DEFAULT TRUE)
 
 # Add project_options v0.20.0
@@ -98,8 +98,8 @@ get_property(BUILDING_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(BUILDING_MULTI_CONFIG)
   if(NOT CMAKE_BUILD_TYPE)
     # Make sure that all supported configuration types have their
-    # associated conan packages available. You can reduce this
-    # list to only the configuration types you use, but only if one
+    # associated conan packages available. This list can be reduced
+    # to only the configuration types in use, but only if one
     # is not forced-set on the command line for VS
     message(TRACE "Setting up multi-config build types")
     set(CMAKE_CONFIGURATION_TYPES
@@ -109,7 +109,7 @@ if(BUILDING_MULTI_CONFIG)
         MinSizeRel
         CACHE STRING "Enabled build types" FORCE)
   else()
-    message(TRACE "User chose a specific build type, so we are using that")
+    message(TRACE "User chose a specific build type, so it is used")
     set(CMAKE_CONFIGURATION_TYPES
         ${CMAKE_BUILD_TYPE}
         CACHE STRING "Enabled build types" FORCE)
@@ -142,10 +142,10 @@ dynamic_project_options(
   CPPCHECK_OPTIONS
   --enable=style,performance,warning,portability
   --inline-suppr
-   #We cannot act on a bug/missing feature of cppcheck
+   #Cannot act on a bug/missing feature of cppcheck
   --suppress=cppcheckError
   --suppress=internalAstError
-   #if a file does not have an internalAstError, we get an unmatchedSuppression error
+   #if a file does not have an internalAstError, an unmatchedSuppression error results
   --suppress=unmatchedSuppression
  --suppress=passedByValue
   --suppress=syntaxError

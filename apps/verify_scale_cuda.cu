@@ -1,8 +1,8 @@
-// verify_scale_cuda.cu — independent residual check for the GPU solver at
+// verify_scale_cuda.cu: independent residual check for the GPU solver at
 // an arbitrary grid size N (see verify_scale_cpu.cpp for full rationale).
 // Solves x-direction once (through whatever PENTA_XALGO / production
 // dispatch selects), copies x back to host, and recomputes the residual
-// from the original coefficients — independent of the solver's own
+// from the original coefficients, independent of the solver's own
 // internal correctness paths.
 //
 // Usage: ./verify_scale_cuda [N] [double|float]

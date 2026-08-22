@@ -22,7 +22,7 @@ endif()
 
 # ---- Dependencies: Catch2 (v2) ----
 # Use an installed Catch2 v2 if present; otherwise fetch it from source at
-# configure time (needs internet on the configuring machine — see README).
+# configure time (needs internet on the configuring machine, see README).
 # This replaces a previously hard-coded personal install path that only worked
 # on the original author's account.
 find_package(Catch2 2 QUIET)

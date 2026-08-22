@@ -1,4 +1,4 @@
-// adi_cpu.cpp — 3-D ADI pentadiagonal solver, CPU version
+// adi_cpu.cpp: 3-D ADI pentadiagonal solver, CPU version
 //
 // Methodology mirror of apps/adi_cuda.cu so CPU and GPU end-to-end numbers
 // are directly comparable: same grid, same diagonally-dominant coefficients,
@@ -31,7 +31,7 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     int    dims[3] = {N, N, N};
 
     printf("=========================================================\n");
-    printf("Pentadiagonal ADI — CPU  (OpenMP + AVX2 SIMD)\n");
+    printf("Pentadiagonal ADI, CPU  (OpenMP + AVX2 SIMD)\n");
     printf("Grid: %d x %d x %d   (%zu elements)\n", N, N, N, n_total);
     printf("Precision: %-6s  Threads: %d   Warmup: %d iter   Timed: %d iter\n",
            precision_name, omp_get_max_threads(), NWARMUP, NITERS);
