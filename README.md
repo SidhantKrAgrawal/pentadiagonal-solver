@@ -6,8 +6,7 @@ independent 5 diagonal systems along each axis (x, y, z) of a 3D grid.
 
 This README covers building, testing and running.
 
-
-REQUIREMENTS
+## Requirements
 
 CMake 3.21 or newer is needed for the presets, GCC 9 or newer for C++17 and
 AVX2, and the CUDA Toolkit 11 or newer (tested with 13.0) for the GPU builds.
@@ -25,8 +24,7 @@ compute capability:
 bash scripts/check_env.sh
 ```
 
-
-QUICK START
+## Quick start
 
 ```bash
 bash scripts/build.sh gpu            # configure and compile into build/
@@ -38,8 +36,7 @@ build.sh detects the GPU's compute capability from nvidia-smi. Passing cpu or
 gpu-mpi instead of gpu selects the other two configurations, which build into
 build-cpu/ and build-mpi/.
 
-
-BUILDING WITHOUT THE SCRIPTS
+## Building without the scripts
 
 With CMake presets:
 
@@ -73,8 +70,7 @@ cmake --build build -j
 The build options are BUILD_FOR_CPU, BUILD_FOR_CUDA, BUILD_FOR_MPI,
 BUILD_FOR_SN (single node) and USE_PROFILING.
 
-
-TESTING
+## Testing
 
 ```bash
 bash scripts/run_tests.sh gpu        # or cpu, or gpu-mpi
@@ -90,8 +86,7 @@ cd <repo root> && build/test/cuda/cuda_tests
 
 The full suite is 201,388 assertions across 10 test cases.
 
-
-RUNNING THE SOLVER
+## Running the solver
 
 app_cuda and adi_cpu perform ADI iterations on an N^3 grid and report per
 direction timings and achieved bandwidth.
@@ -115,8 +110,7 @@ The 2D lid driven cavity CFD application, on the CPU solver:
 build/apps/app_cpu                       # app_cpu_orig runs the unoptimised solver
 ```
 
-
-CHOOSING THE ALGORITHM
+## Choosing the algorithm
 
 By default the solver picks a kernel per direction from the precision and the
 device. Two environment variables override that choice, and the app prints the
@@ -165,8 +159,7 @@ PENTA_PEAK_BW_GBS overrides the detected peak bandwidth; and
 PENTA_DEBUG_LAUNCH=1 reports why an opt in kernel declined to launch instead of
 falling back silently.
 
-
-VERIFYING A KERNEL INDEPENDENTLY
+## Verifying a kernel independently
 
 Each kernel has a validator that builds a random diagonally dominant system and
 checks the solution against an independent reference. All print PASS or FAIL.
@@ -179,8 +172,7 @@ build/apps/fp32_accuracy_cuda      256 float               # FP32 against FP64 f
 build/apps/verify_scale_cpu        320 double              # CPU equivalent
 ```
 
-
-THE SCRIPTS
+## The scripts
 
 build.sh configures and compiles. It takes gpu, gpu-mpi or cpu, defaulting to
 gpu, maps that to the matching CMake preset and build directory, and reads the
@@ -231,8 +223,7 @@ issue rate and the memory floor for the solver's traffic using timing alone, by
 sweeping the number of injected FMAs per element, so it needs no profiler
 counters.
 
-
-LAYOUT
+## Layout
 
 ```
 include/pentadsolver.hpp             public C API
@@ -245,8 +236,7 @@ test/                                Catch2 suites and reference data in files/
 scripts/                             build, test and measurement scripts
 ```
 
-
-TROUBLESHOOTING
+## Troubleshooting
 
 If nvcc is not found, load the CUDA module or add $CUDA_HOME/bin to PATH, or
 build the cpu preset instead.
@@ -274,8 +264,7 @@ the reason; the app also reports the kernel that actually ran.
 If the CPU stops speeding up past about 4 threads, that is expected. The solver
 is memory bandwidth bound.
 
-
-ATTRIBUTION
+## Attribution
 
 The original CPU and CUDA pentadiagonal base, covering the library structure,
 the CPU OpenMP and AVX2 solver, the MPI reduced system solver, the ADI cavity
@@ -293,7 +282,6 @@ CS908 MSc dissertation, University of Warwick, supervised by Dr Gihan Mudalige.
 Build scaffolding uses project_options, tests use Catch2, and the micro
 benchmarks use Google Benchmark.
 
-
-LICENCE
+## Licence
 
 BSD 3-Clause. See LICENSE.
