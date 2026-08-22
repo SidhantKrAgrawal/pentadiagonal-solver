@@ -116,17 +116,28 @@ By default the solver picks a kernel per direction from the precision and the
 device. Two environment variables override that choice, and the app prints the
 kernel that actually ran on every line of output.
 
-PENTA_XALGO selects the x direction (contiguous) solve. Its values are naive
-for Algorithm 1, a thread per system with uncoalesced access, which is the
-baseline; transpose for Algorithm 2, which transposes to [elem][sys] in DRAM and
-solves with the strided kernel; thomas-pcr for Algorithm 3, the register
-resident hybrid Thomas-PCR with SPIKE partitioning; shared-fact for Algorithm 4,
-the ADI structured solver; and auto, the default.
+PENTA_XALGO selects the x direction (contiguous) solve:
 
-PENTA_YALGO and PENTA_ZALGO select the y and z (strided) solves independently,
-and accept naive, thomas-pcr, shared-fact and auto. PENTA_YZALGO sets both at
-once. Algorithm 2 is x only by design: y and z are already coalesced, so
-transposing there is pure added cost.
+| Value | Algorithm | What it does |
+| --- | --- | --- |
+| `naive` | 1 | One thread per system, uncoalesced access. The baseline. |
+| `transpose` | 2 | Transposes to [elem][sys] in DRAM, then solves with the strided kernel. |
+| `thomas-pcr` | 3 | Register resident hybrid Thomas-PCR with SPIKE partitioning. |
+| `shared-fact` | 4 | ADI structured solver, one precomputed factorisation shared by every system. |
+| `auto` | | Precision and device aware dispatch. The default. |
+
+PENTA_YALGO and PENTA_ZALGO select the y and z (strided) solves independently.
+PENTA_YZALGO sets both at once.
+
+| Value | Algorithm | What it does |
+| --- | --- | --- |
+| `naive` | 1 | One thread per system, strided walk with global scratch. |
+| `thomas-pcr` | 3 | Algorithm 3 staged through a shared memory tile. |
+| `shared-fact` | 4 | ADI structured solver. |
+| `auto` | | Precision aware dispatch. The default. |
+
+Algorithm 2 is x only by design: y and z are already coalesced, so transposing
+there is pure added cost.
 
 ```bash
 PENTA_XALGO=thomas-pcr build/apps/app_cuda 256 50 float
@@ -153,88 +164,66 @@ const bool fp64_favours_algo3 =
     (sizeof(Float) == 8) && (device_fp64_ratio_denom() <= 32);
 ```
 
-x direction: Algorithm 3 (thomas-pcr) when FP64 runs at 1/32 of FP32 or better,
-otherwise Algorithm 2 (transpose).
+The x direction takes Algorithm 3 (thomas-pcr) when FP64 runs at 1/32 of FP32 or
+better, and Algorithm 2 (transpose) otherwise. The y and z directions take
+Algorithm 1 (naive) in every case.
 
-```
-RTX 3050 (sm_86, 1/64)    -> Algorithm 2
-GTX 1080 (sm_61, 1/32)    -> Algorithm 3
-V100 / A100 / H100 (1/2)  -> Algorithm 3
-```
+| GPU | FP64 rate | x | y | z |
+| --- | --- | --- | --- | --- |
+| RTX 3050 (sm_86) | 1/64 | 2 transpose | 1 naive | 1 naive |
+| GTX 1080 (sm_61) | 1/32 | 3 thomas-pcr | 1 naive | 1 naive |
+| V100, A100, H100 | 1/2 | 3 thomas-pcr | 1 naive | 1 naive |
 
-y and z directions: Algorithm 1 (naive) in both cases. The FP32 auto path to
-Algorithm 3 is gated on `sizeof(Float) == 4`, so FP64 never takes it, and
-Algorithm 3's redundant arithmetic is compute bound at the consumer FP64 rate,
-costing about 44 ms there.
+The FP32 auto path to Algorithm 3 is gated on `sizeof(Float) == 4`, so FP64
+never takes it, and Algorithm 3's redundant arithmetic is compute bound at the
+consumer FP64 rate, costing about 44 ms there.
 
 So on an RTX 3050 that command runs Algorithm 2 on x and Algorithm 1 on y and z.
 The app prints the kernel that actually ran on each line, so none of this has to
 be inferred.
 
-Other variables: PENTA_PCR_LANES (8, 16 or 32) sets the lanes per system for
-Algorithm 3; PENTA_WARMUP_MS sets the warm up wall time, default 1500;
-PENTA_PEAK_BW_GBS overrides the detected peak bandwidth; and
-PENTA_DEBUG_LAUNCH=1 reports why an opt in kernel declined to launch instead of
-falling back silently.
+Other variables:
+
+| Variable | Effect |
+| --- | --- |
+| `PENTA_PCR_LANES` | Lanes per system for Algorithm 3: 8, 16 or 32. |
+| `PENTA_WARMUP_MS` | Warm up wall time in ms, default 1500. 0 reverts to a fixed iteration count. |
+| `PENTA_PEAK_BW_GBS` | Overrides the detected peak bandwidth used in the reported percentages. |
+| `PENTA_DEBUG_LAUNCH` | Set to 1 to report why an opt in kernel declined to launch, instead of falling back silently. |
 
 ## Verifying a kernel independently
 
 Each kernel has a validator that builds a random diagonally dominant system and
 checks the solution against an independent reference. All print PASS or FAIL.
 
+| Validator | Arguments | What it checks |
+| --- | --- | --- |
+| `verify_scale_cuda` | N, precision | Backward residual of the GPU x solve at a grid size the fixed suite does not cover. |
+| `verify_scale_cpu` | N, precision | The same check against the CPU solver. |
+| `verify_shared_fact_cuda` | N, precision, solvedim, samples | Algorithm 4 against the general path, with coefficients that vary along the line so an indexing bug cannot hide. solvedim is 0, 1 or 2. |
+| `verify_strided_cuda` | N, precision, dir, algo | A strided y or z kernel against the naive one over the full grid, which is what catches system mixing. dir is 1 for y, 2 for z. |
+| `fp32_accuracy_cuda` | N, precision | Forward error of the FP32 solve against a double precision host reference, not just the residual. |
+
 ```bash
-build/apps/verify_scale_cuda       320 float               # residual check at a given N
-build/apps/verify_shared_fact_cuda 256 double 0            # shared-fact, solvedim 0, 1 or 2
-build/apps/verify_strided_cuda     256 float 1 thomas-pcr  # strided y or z; dir 1=y, 2=z
-build/apps/fp32_accuracy_cuda      256 float               # FP32 against FP64 forward error
-build/apps/verify_scale_cpu        320 double              # CPU equivalent
+build/apps/verify_scale_cuda       320 float
+build/apps/verify_shared_fact_cuda 256 double 0
+build/apps/verify_strided_cuda     256 float 1 thomas-pcr
+build/apps/fp32_accuracy_cuda      256 float
+build/apps/verify_scale_cpu        320 double
 ```
 
 ## The scripts
 
-build.sh configures and compiles. It takes gpu, gpu-mpi or cpu, defaulting to
-gpu, maps that to the matching CMake preset and build directory, and reads the
-compute capability from nvidia-smi so the architecture does not have to be known
-in advance. CUDA_ARCH and JOBS override the detected values.
-
-check_env.sh reports the versions of cmake, g++, nvcc and MPI, the GPU name and
-its compute capability, and the core count, without configuring anything. It is
-the first thing to run when a build fails.
-
-run_tests.sh runs the Catch2 suites for a given preset from the repository root,
-which is required because the test binaries read reference data from ./files.
-
-run_benchmarks.sh runs the full ADI solve on the GPU and on the CPU for one grid
-size and prints the two side by side. It takes N and the iteration count,
-defaulting to 256 and 50, and writes raw output under results/repro_<date>/.
-
-run_algorithm_sweep.sh is the per direction comparison. It runs in two phases:
-first it measures every algorithm that has a kernel for a direction while
-holding the other two directions on a fixed baseline, which makes the rows
-comparable; then it composes the per direction winners into one configuration
-and measures the true end to end wall time. It takes N, the iteration count and
-a precision of double, float or both, and --with-restricted adds shared-fact.
-
-run_grid_transcript.sh runs the same matrix across grids 128, 256, 320 and 384
-in both precisions, recording every run as the command, its verbatim output and
-the extracted result, so each number can be traced back to what produced it. It
-also emits cpu.csv and gpu.csv.
-
-build_grid_report.py assembles the directories that run_grid_transcript.sh wrote
-into a single text report: a methodology header, the run by run transcripts, the
-summary tables and the per axis winners. It excludes Algorithm 2 from the y and
-z rankings, since its y and z columns are the naive strided solve, and it
-separates out any row whose requested kernel was not the kernel that ran.
-
-run_hpc_study.sh is one non interactive command for a machine that has not been
-used before. It configures, builds, runs the correctness suite and stops if that
-fails, measures the machine's own memory and compute roofline, runs the full
-algorithm sweep across grids, precisions and lane counts, writes a readable
-summary and tars the result. It builds a fat binary for sm_70 and sm_90 by
-default so it can be launched from a login node with no GPU; CUDA_ARCH overrides
-that. GRIDS, GPU_ITERS, SKIP_BUILD and OUTDIR are the other knobs. Nothing is
-silently skipped: a step that fails is recorded with its reason and the run
-continues. Expect 10 to 25 minutes.
+| Script | Arguments | What it does |
+| --- | --- | --- |
+| `build.sh` | preset (gpu, gpu-mpi, cpu) | Configures and compiles. Maps the preset to the matching CMake preset and build directory, and reads the compute capability from nvidia-smi so the architecture does not have to be known in advance. CUDA_ARCH and JOBS override. |
+| `check_env.sh` | none | Reports the cmake, g++, nvcc and MPI versions, the GPU name and compute capability, and the core count. Configures nothing. The first thing to run when a build fails. |
+| `run_tests.sh` | preset | Runs the Catch2 suites from the repository root, which is required because the test binaries read reference data from ./files. |
+| `run_benchmarks.sh` | N, iters | Runs the full ADI solve on the GPU and the CPU for one grid size and prints the two side by side. Defaults to 256 and 50. Raw output goes under results/repro_<date>/. |
+| `run_algorithm_sweep.sh` | N, iters, precision, `--with-restricted` | The per direction comparison, in two phases. Phase 1 measures every algorithm that has a kernel for a direction while the other two are held on a fixed baseline, which makes the rows comparable. Phase 2 composes the per direction winners and measures true end to end wall time. `--with-restricted` adds shared-fact. |
+| `run_grid_transcript.sh` | gpu iters, cpu iters | Runs the same matrix across grids 128, 256, 320 and 384 in both precisions, recording each run as the command, its verbatim output and the extracted result, so every number traces back to what produced it. Also emits cpu.csv and gpu.csv. |
+| `build_grid_report.py` | stamp, out.txt | Assembles the directories run_grid_transcript.sh wrote into one text report: methodology header, run by run transcripts, summary tables, per axis winners. Excludes Algorithm 2 from the y and z rankings, since its y and z columns are the naive strided solve, and separates any row whose requested kernel was not the one that ran. |
+| `run_hpc_study.sh` | none, env only | One non interactive command for an unfamiliar machine: configure, build, correctness suite with a hard stop on failure, roofline, full sweep across grids, precisions and lane counts, readable summary, tarball. Builds a fat binary for sm_70 and sm_90 so it can be launched from a login node with no GPU. Nothing is silently skipped: a failed step is recorded with its reason and the run continues. Expect 10 to 25 minutes. Knobs are CUDA_ARCH, GRIDS, GPU_ITERS, SKIP_BUILD and OUTDIR. |
 
 roofline_probe_cuda is an app rather than a script. It measures the GPU's FP64
 issue rate and the memory floor for the solver's traffic using timing alone, by
