@@ -6,65 +6,170 @@ independent 5 diagonal systems along each axis (x, y, z) of a 3D grid.
 
 This README covers building, testing and running.
 
-## Requirements
+## What is needed
 
-CMake 3.21 or newer is needed for the presets, GCC 9 or newer for C++17 and
-AVX2, and a CUDA Toolkit for the GPU builds. OpenMP ships with GCC.
-check_env.sh reports whether the toolkit in PATH can build for the GPU present.
+A machine with an NVIDIA GPU, a CUDA toolkit, GCC 9 or newer, and CMake 3.21 or
+newer. Network access is needed the first time only, because the first configure
+downloads project_options, Catch2 and Google Benchmark.
 
-The first configure downloads project_options, Catch2 and Google Benchmark from
-GitHub. On a cluster, configure on a login node; the downloads are cached in the
-build directory, so compilation and all later runs work offline.
+Everything is run on the machine that holds the GPU. On a cluster that means a
+compute node, not the login node, because the build reads the card directly.
 
-To report the toolchain the build will use, along with the GPU name and its
-compute capability:
+## Step 1: get the code
+
+```bash
+git clone https://github.com/SidhantKrAgrawal/pentadiagonal-solver.git
+cd pentadiagonal-solver
+```
+
+## Step 2: log into the GPU machine
+
+```bash
+ssh <gpu-host>
+cd <path to pentadiagonal-solver>
+```
+
+Confirm a GPU is visible:
+
+```bash
+nvidia-smi --query-gpu=name,compute_cap --format=csv
+```
+
+If that command is not found, or lists nothing, this machine has no GPU. Move to
+one that does, or build the CPU-only configuration described in Step 8.
+
+## Step 3: put CUDA on PATH
+
+Most clusters use modules:
+
+```bash
+module avail          # lists what the site provides
+module load cuda      # or a specific one, e.g. module load CUDA/12.6.2
+```
+
+If there are no modules, find the toolkit and add its bin directory:
+
+```bash
+export PATH=/path/to/cuda/bin:$PATH
+```
+
+Do not assume this worked. Step 4 checks it.
+
+## Step 4: check the environment
 
 ```bash
 bash scripts/check_env.sh
 ```
 
-## Quick start
-
-Everything below runs on the machine that holds the GPU. On a cluster that is a
-compute node, not the login node, because the build reads the card directly.
-Log in, make a CUDA toolkit available, and go to the repository:
-
-```bash
-ssh <gpu-host>                       # a machine with a GPU in it
-module load cuda                     # or add the CUDA bin directory to PATH
-cd <path to pentadiagonal-solver>
-```
-
-A loaded module is not proof of a usable toolkit. Some sites ship a modulefile
-that puts an incomplete CUDA on PATH: nvcc runs and reports its version, but the
-headers are not beside it, so the first real compile fails on cuda_runtime.h.
-check_env.sh compiles a two line file to settle this, and names the fix if the
-installation is partial. Run it before anything else:
-
-```bash
-bash scripts/check_env.sh            # the GPU, and whether this nvcc can build for it
-bash scripts/build.sh gpu            # configure and compile into build/
-bash scripts/run_tests.sh gpu        # run the Catch2 correctness suites
-build/apps/app_cuda 256 50 double    # solve a 256^3 grid, 50 ADI iterations
-```
-
-check_env.sh answers the three questions that decide whether a build can work
-at all: which GPU is present, whether the toolkit on PATH can generate code for
-that compute capability, and whether that toolkit can compile anything. Expect
+This is the step that decides whether a build can succeed. Expect these four
+lines:
 
 ```
+nvcc                   Cuda compilation tools, release 13.0, V13.0.88
+nvcc path              /some/path/cuda/bin/nvcc
 nvcc compiles          yes
 toolkit match          yes, this nvcc can build for compute 75
 ```
 
-Anything else is worth fixing before building, because both failures surface
-later as pages of CMake output that do not name the cause. Newer toolkits drop
-older GPUs, so a recent CUDA on an older card needs a 12.x toolkit.
+Both `yes` lines matter, and they fail for different reasons.
 
-build.sh reads the compute capability from nvidia-smi, so no architecture has
-to be given, and it stops with the same explanation if the toolkit cannot build
-for the card. Passing cpu instead of gpu builds the CPU-only configuration into
-build-cpu/, which needs no GPU and no CUDA.
+**`nvcc compiles: NO`** means the CUDA installation is incomplete: the nvcc
+binary exists but its headers do not sit beside it. A modulefile pointing at a
+partial install is the usual cause, and a complete copy is often nested one
+directory deeper. Find it and put it first on PATH:
+
+```bash
+ls -d $(dirname $(dirname $(command -v nvcc)))/*/bin/nvcc 2>/dev/null
+export PATH=/the/directory/that/printed:$PATH
+```
+
+Then run check_env.sh again. Skipping this produces a page of CMake output ending
+in `cuda_runtime.h: No such file or directory`.
+
+**`toolkit match: NO`** means this CUDA is too new for this GPU. Newer toolkits
+drop older cards: CUDA 13 supports compute capability 75 and above, so a V100 at
+70, or anything older, needs a 12.x toolkit. Load one and re-check:
+
+```bash
+module load CUDA/12.6.2      # or whatever 12.x the site provides
+```
+
+Do not continue until both lines read `yes`.
+
+## Step 5: build
+
+```bash
+bash scripts/build.sh gpu
+```
+
+The compute capability is read from nvidia-smi, so no architecture has to be
+given. This takes a few minutes, mostly compiling CUDA templates. It ends with:
+
+```
+>> Build complete. Binaries in build/ :
+```
+
+## Step 6: check correctness
+
+```bash
+bash scripts/run_tests.sh gpu
+```
+
+Expect `All tests passed (201388 assertions in 10 test cases)` twice, once for
+the CUDA suite and once for the CPU suite. Anything else is a real failure and
+should be reported rather than worked around.
+
+The test binaries read reference data from ./files, so they must be started from
+the repository root. The script handles that. Running one directly needs a cd
+first:
+
+```bash
+cd <path to pentadiagonal-solver> && build/test/cuda/cuda_tests
+```
+
+## Step 7: run the solver
+
+```bash
+build/apps/app_cuda 256 50 double
+```
+
+A 256^3 grid, 50 ADI iterations, double precision. It prints the kernel used for
+each direction, per direction timings, achieved bandwidth, and the end to end
+time per iteration. With nothing else set this runs Algorithm 1 in all three
+directions, which is the baseline and the slowest. Step 9 measures the rest.
+
+## Step 8: CPU only, if there is no GPU
+
+```bash
+bash scripts/build.sh cpu
+bash scripts/run_tests.sh cpu
+build/apps/adi_cpu 256 10 double
+OMP_NUM_THREADS=4 build/apps/adi_cpu 256 10 double
+```
+
+No CUDA toolkit and no GPU are needed for this path.
+
+## Step 9: measure this machine
+
+Which kernel is fastest depends on the GPU and the precision, so it is measured
+rather than assumed:
+
+```bash
+bash scripts/run_algorithm_sweep.sh 256 50 both
+```
+
+Every algorithm in every direction, both precisions, then the best combination
+timed end to end. Takes roughly 10 to 20 minutes and writes to results/.
+
+For the full campaign in one command, including a correctness gate, a measured
+roofline, a grid sweep and a tarball of the output:
+
+```bash
+bash scripts/run_hpc_study.sh
+```
+
+Expect 10 to 25 minutes. It stops if the correctness suite fails, and records any
+other failure with its reason rather than skipping it silently.
 
 ## Build options
 
@@ -72,39 +177,19 @@ BUILD_FOR_CPU, BUILD_FOR_CUDA, BUILD_FOR_MPI, BUILD_FOR_SN (single node) and
 USE_PROFILING are the CMake options behind the presets, for a hand-rolled
 configure.
 
-## Testing
+## Other applications
+
+A 2D lid driven cavity CFD application, on the CPU solver:
 
 ```bash
-bash scripts/run_tests.sh gpu        # or cpu
+build/apps/app_cpu                   # app_cpu_orig runs the unoptimised solver
 ```
 
-This runs cuda_tests and tests. Both read reference data from ./files, so they
-must run from the repository root, which is what the script handles. Running a
-binary directly needs a cd to the root first:
+A probe that measures this GPU's FP64 issue rate and memory floor by timing
+alone, with no profiler counters:
 
 ```bash
-cd <repo root> && build/test/cuda/cuda_tests
-```
-
-Each suite is 201,388 assertions across 10 test cases, so a gpu run reports
-that figure twice, once for CUDA and once for CPU.
-
-## Running the solver
-
-app_cuda and adi_cpu perform ADI iterations on an N^3 grid and report per
-direction timings and achieved bandwidth.
-
-```bash
-# ./app_cuda [N] [iters] [precision]     precision = double (default) or float
-build/apps/app_cuda 256 50 double        # GPU
-build/apps/adi_cpu  256 10 double        # CPU baseline
-OMP_NUM_THREADS=4 build/apps/adi_cpu 256 10 double
-```
-
-The 2D lid driven cavity CFD application, on the CPU solver:
-
-```bash
-build/apps/app_cpu                       # app_cpu_orig runs the unoptimised solver
+build/apps/roofline_probe_cuda
 ```
 
 ## Choosing the algorithm
@@ -163,28 +248,6 @@ bash scripts/run_algorithm_sweep.sh 256 50 both
 
 That prints every algorithm in every direction for both precisions, then the
 best combination measured end to end.
-
-## Moving to a different GPU
-
-Nothing in the repository is tied to a particular machine or card. The Quick
-start above is the whole procedure on any GPU: log in, load a CUDA toolkit,
-check_env, build, test. Adding one command measures which kernel wins there:
-
-```bash
-bash scripts/run_algorithm_sweep.sh 256 50 both
-```
-
-Or the whole campaign in one non interactive command:
-
-```bash
-bash scripts/run_hpc_study.sh
-```
-
-It builds for the compute capability of the GPU it finds, falling back to a fat
-binary only when no GPU is visible, such as on a login node. Peak bandwidth is
-read from the device rather than assumed. The generated report names whatever
-machines and GPUs produced the data, works with one machine or several, and
-carries no timing or baseline figure over from another card.
 
 ## Verifying a kernel independently
 
