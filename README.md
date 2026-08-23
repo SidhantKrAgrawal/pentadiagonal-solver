@@ -35,7 +35,11 @@ module load cuda                     # or add the CUDA bin directory to PATH
 cd <path to pentadiagonal-solver>
 ```
 
-Then:
+A loaded module is not proof of a usable toolkit. Some sites ship a modulefile
+that puts an incomplete CUDA on PATH: nvcc runs and reports its version, but the
+headers are not beside it, so the first real compile fails on cuda_runtime.h.
+check_env.sh compiles a two line file to settle this, and names the fix if the
+installation is partial. Run it before anything else:
 
 ```bash
 bash scripts/check_env.sh            # the GPU, and whether this nvcc can build for it
@@ -44,11 +48,18 @@ bash scripts/run_tests.sh gpu        # run the Catch2 correctness suites
 build/apps/app_cuda 256 50 double    # solve a 256^3 grid, 50 ADI iterations
 ```
 
-Run check_env.sh first. It reports the GPU, its compute capability, and whether
-the CUDA toolkit on PATH can generate code for that card, which is the one
-mismatch that stops a build for a reason the compiler output does not make
-obvious. Newer toolkits drop older GPUs, so a recent CUDA on an older card
-needs a 12.x toolkit instead.
+check_env.sh answers the three questions that decide whether a build can work
+at all: which GPU is present, whether the toolkit on PATH can generate code for
+that compute capability, and whether that toolkit can compile anything. Expect
+
+```
+nvcc compiles          yes
+toolkit match          yes, this nvcc can build for compute 75
+```
+
+Anything else is worth fixing before building, because both failures surface
+later as pages of CMake output that do not name the cause. Newer toolkits drop
+older GPUs, so a recent CUDA on an older card needs a 12.x toolkit.
 
 build.sh reads the compute capability from nvidia-smi, so no architecture has
 to be given, and it stops with the same explanation if the toolkit cannot build
@@ -234,8 +245,17 @@ build the cpu preset instead.
 If the configure step hangs or fails while downloading, there is no internet on
 that node. Configure on a login node, then build anywhere.
 
-If the build stops at `cuda_runtime.h: No such file or directory`, a module has
-put a broken nvcc first in PATH. Point PATH at a complete CUDA installation.
+If the build stops at `cuda_runtime.h: No such file or directory`, the CUDA on
+PATH is incomplete: the nvcc binary is there but its headers are not. This is
+usually a modulefile pointing at a partial install, and the complete one is
+often nested a directory deeper. Find it with
+
+```bash
+ls -d $(dirname $(dirname $(command -v nvcc)))/*/bin/nvcc 2>/dev/null
+```
+
+then put that directory first on PATH. check_env.sh reports this as
+`nvcc compiles: NO` before a build is attempted.
 
 If CMake cannot detect the CUDA architecture, there is no GPU on the machine
 running the configure step. Pass -DCMAKE_CUDA_ARCHITECTURES with the compute

@@ -30,6 +30,25 @@ if [ "$PRESET" != "cpu" ]; then
   command -v nvcc >/dev/null 2>&1 || {
     echo "!! nvcc not in PATH. Load the CUDA module (e.g. 'module load cuda') or"
     echo "   add \$CUDA_HOME/bin to PATH, then re-run.  For a CPU-only build use: cpu"; exit 1; }
+
+  # An nvcc that answers --version is not necessarily one that can compile: a
+  # partial install has the binary but not the headers, and only fails once
+  # CMake tries a real translation unit, deep inside its own output.  Two lines
+  # here turn that into one sentence.
+  PROBE_DIR="$(mktemp -d)"
+  printf '#include <cuda_runtime.h>\nint main(){return 0;}\n' > "$PROBE_DIR/probe.cu"
+  if ! PROBE_ERR="$(nvcc -c "$PROBE_DIR/probe.cu" -o "$PROBE_DIR/probe.o" 2>&1)"; then
+    echo "!! nvcc is on PATH but cannot compile:"
+    echo "     $(command -v nvcc)"
+    echo "     $(echo "$PROBE_ERR" | grep -iE 'fatal error|error:' | head -1)"
+    echo "   This CUDA installation is incomplete, the headers are not beside the"
+    echo "   binary.  A complete one is often nested a level deeper; find it with:"
+    echo "     ls -d \$(dirname \$(dirname \$(command -v nvcc)))/*/bin/nvcc 2>/dev/null"
+    echo "   then put that directory first on PATH and re-run.  Modules that load a"
+    echo "   partial install are the usual cause."
+    rm -rf "$PROBE_DIR"; exit 1
+  fi
+  rm -rf "$PROBE_DIR"
   ARCH="${CUDA_ARCH:-}"
   if [ -z "$ARCH" ] && command -v nvidia-smi >/dev/null 2>&1; then
     CC="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1)"

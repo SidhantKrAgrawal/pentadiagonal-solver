@@ -10,7 +10,28 @@ echo "=== pentadiagonal-solver environment check ==="
 
 if have cmake; then say "cmake"   "$(cmake --version | head -1)"; else say "cmake" "NOT FOUND (required)"; fi
 if have g++;   then say "g++"     "$(g++ --version | head -1)";   else say "g++"   "not found"; fi
-if have nvcc;  then say "nvcc"    "$(nvcc --version | grep -i release | sed 's/^ *//')";
+if have nvcc;  then
+  say "nvcc"    "$(nvcc --version | grep -i release | sed 's/^ *//')"
+  say "nvcc path" "$(command -v nvcc)"
+  # An nvcc that reports a version is not necessarily an nvcc that can compile.
+  # A partial install (binary present, headers absent) answers --version and
+  # --list-gpu-arch quite happily and then fails on the first real translation
+  # unit, which surfaces as a wall of CMake output naming cuda_runtime.h.  A
+  # two-line compile settles it here instead.
+  CUDA_PROBE="$(mktemp -d)"
+  printf '#include <cuda_runtime.h>\nint main(){return 0;}\n' > "$CUDA_PROBE/probe.cu"
+  if PROBE_ERR="$(nvcc -c "$CUDA_PROBE/probe.cu" -o "$CUDA_PROBE/probe.o" 2>&1)"; then
+    say "nvcc compiles" "yes"
+  else
+    say "nvcc compiles" "NO, this CUDA installation is incomplete"
+    echo "     $(echo "$PROBE_ERR" | grep -iE 'fatal error|error:' | head -1)"
+    echo "     The nvcc binary runs but cannot build anything, usually because the"
+    echo "     headers are missing next to it.  Look for a complete installation,"
+    echo "     often nested a level deeper, and put THAT on PATH:"
+    echo "       ls -d \$(dirname \$(dirname \$(command -v nvcc)))/*/bin/nvcc 2>/dev/null"
+    echo "     A module that loads a partial install is a common cause."
+  fi
+  rm -rf "$CUDA_PROBE"
 else say "nvcc" "NOT FOUND, GPU build needs CUDA in PATH (module load cuda / add \$CUDA_HOME/bin)"; fi
 if have mpicxx || have mpic++; then say "MPI"  "$( (mpicxx --version 2>/dev/null || mpic++ --version) | head -1)";
 else say "MPI" "not found (only needed for the gpu-mpi / MPI presets)"; fi
