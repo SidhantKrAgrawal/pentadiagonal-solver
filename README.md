@@ -133,21 +133,6 @@ bash scripts/run_algorithm_sweep.sh 256 50 both
 That prints every algorithm in every direction for both precisions, then the
 best combination measured end to end.
 
-Other variables:
-
-| Variable | Effect |
-| --- | --- |
-| `PENTA_PCR_LANES` | Lanes per system for Algorithm 3: 8, 16 or 32. |
-| `PENTA_Y_BSYS`, `PENTA_Z_BSYS` | Systems per block for Algorithm 3 on y and z: 2, 4, 8, 16 or 32. |
-| `PENTA_Y_BLOCK`, `PENTA_Z_BLOCK` | Threads per block for Algorithm 1 on y and z: any multiple of 32 up to 1024. |
-| `PENTA_WARMUP_MS` | Warm up wall time in ms, default 1500. 0 reverts to a fixed iteration count. |
-| `PENTA_PEAK_BW_GBS` | Overrides the peak bandwidth used in the reported percentages. Normally read from the device. |
-| `PENTA_DEBUG_LAUNCH` | Set to 1 to report why a kernel declined to launch. |
-
-The four tuning variables have defaults measured on one GPU. They are not
-properties of the algorithm, and the best value for each is a property of the
-card, so sweep them rather than trusting the default on a new machine.
-
 ## Moving to a different GPU
 
 Nothing in the repository is tied to a particular machine or card. On a new
