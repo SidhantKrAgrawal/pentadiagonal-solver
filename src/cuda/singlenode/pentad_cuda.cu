@@ -38,8 +38,8 @@ static bool launch_succeeded(const char *what) {
 
 // ---------------------------------------------------------------------------
 // Algorithm 1 (Naive, code name "naive"): thread-per-system pentadiagonal
-// Thomas solve, no coalescing.  Baseline; kept for comparison, never
-// dispatched by auto.
+// Thomas solve, no coalescing.  The baseline, and the default when no
+// algorithm is named.
 // ---------------------------------------------------------------------------
 
 template <typename Float>
@@ -610,40 +610,8 @@ static void pentadsolver_batch_x_algo3_launch(const Float *ds, const Float *dl,
       ds, dl, d, du, dw, x, static_cast<int>(n_sys));
 }
 
-// FP64:FP32 throughput denominator for the running device (FP64 = 1/N of FP32).
-//
-// This is the single hardware number that decides which x-solve is right in
-// FP64, so it is queried rather than assumed.  Redundant-work algorithms
-// (Algorithm 3) trade arithmetic for parallelism, which pays off exactly when
-// FP64 arithmetic is not crippled.  Measured at 256^3:
-//
-//   RTX 3050 (sm_86, 1/64):  Algorithm 3 20.9 ms  vs Algorithm 2 18.7 ms -> Alg 2
-//   GTX 1080 (sm_61, 1/32):  Algorithm 3 11.0 ms  vs Algorithm 2 14.5 ms -> Alg 4
-//
-// so the crossover sits between 1/32 and 1/64.  Datacentre parts (1/2) are far
-// past it and would favour Algorithm 3 by a wide margin.
-static int device_fp64_ratio_denom() {
-  static int cached = 0;
-  if (cached != 0) { return cached; }
-  int dev = 0;
-  int major = 0;
-  int minor = 0;
-  if (cudaGetDevice(&dev) != cudaSuccess) { return (cached = 64); }
-  cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev);
-  cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev);
-  switch (major * 10 + minor) {
-    case 60: case 70: case 72: case 80: case 90:
-      cached = 2;  break;   // P100 / V100 / A100 / H100, full-rate FP64
-    case 86: case 87: case 89:
-      cached = 64; break;   // consumer Ampere / Ada
-    default:
-      cached = 32; break;   // consumer Pascal, Turing, and unknown parts
-  }
-  return cached;
-}
-
-// Returns true if POP-PCR handled this sys_size, false if the caller should
-// fall back to another x-solve.
+// Returns true if POP-PCR handled this sys_size, false if no template exists
+// for it.
 //
 // L is chosen BY PRECISION, because the two precisions are limited by
 // different resources:
@@ -721,6 +689,19 @@ bool pentadsolver_batch_x_algo3(const Float *ds, const Float *dl,
 // per-block register file and is rejected at launch.
 constexpr int ALGO1_Y_BLOCK = 64;
 constexpr int ALGO1_Z_BLOCK = 64;
+
+// The two constants above are defaults measured on one GPU, not properties of
+// the algorithm, so they are overridable per machine: PENTA_Y_BLOCK and
+// PENTA_Z_BLOCK.  This is a launch parameter, so any positive multiple of the
+// warp size up to 1024 is legal, though a large block can exceed the per-block
+// register file and be refused at launch.
+static int env_block(const char *name, int fallback) {
+  const char *e = std::getenv(name);
+  if (e == nullptr || e[0] == '\0') { return fallback; }
+  const int v = std::atoi(e);
+  if (v <= 0 || v > 1024 || (v % 32) != 0) { return fallback; }
+  return v;
+}
 
 // Systems (= warps) per block, tuned per direction.  At 256^3 FP32:
 //   y (stride N)    BSYS=4 -> 3.21 ms, 8 -> 3.76, 16 -> 4.27.  Narrow blocks
@@ -884,16 +865,12 @@ static bool algo3_strided_launch(const Float *ds, const Float *dl,
   }
 }
 
-// Returns true if Algorithm 3 handled this strided batch, false -> the caller
-// falls back to the legacy scratch-based kernel.  BSYS is supplied by the
-// calling direction so y and z can be tuned independently.
+// Returns true if Algorithm 3 handled this strided batch.
 template <typename Float, int BSYS>
-static bool pentadsolver_batch_strided_algo3(const Float *ds, const Float *dl,
-                                             const Float *d, const Float *du,
-                                             const Float *dw, Float *x,
-                                             size_t n_sys, size_t sys_size,
-                                             size_t stride, size_t run_len) {
-  if (sys_size % ALGO3_W != 0) { return false; }
+static bool algo3_strided_bsys(const Float *ds, const Float *dl, const Float *d,
+                               const Float *du, const Float *dw, Float *x,
+                               size_t n_sys, size_t sys_size, size_t stride,
+                               size_t run_len) {
   if (run_len % BSYS != 0) { return false; }
   switch (sys_size / ALGO3_W) { // = M (elements per lane)
     case 4:  return algo3_strided_launch<Float, 4,  BSYS>(ds, dl, d, du, dw, x, n_sys, stride, run_len);
@@ -901,8 +878,42 @@ static bool pentadsolver_batch_strided_algo3(const Float *ds, const Float *dl,
     case 10: return algo3_strided_launch<Float, 10, BSYS>(ds, dl, d, du, dw, x, n_sys, stride, run_len);
     case 12: return algo3_strided_launch<Float, 12, BSYS>(ds, dl, d, du, dw, x, n_sys, stride, run_len);
     case 16: return algo3_strided_launch<Float, 16, BSYS>(ds, dl, d, du, dw, x, n_sys, stride, run_len);
-    default: return false; // M not instantiated -> fall back
+    default: return false; // M not instantiated
   }
+}
+
+// BSYS (systems per block) is a template parameter, so the set of usable values
+// is fixed at compile time, but which of them is fastest is a property of the
+// GPU rather than of the algorithm.  The default comes from the calling
+// direction; PENTA_Y_BSYS and PENTA_Z_BSYS select another instantiated value so
+// the knob can be swept on whatever machine this is.
+template <typename Float>
+static bool pentadsolver_batch_strided_algo3(const Float *ds, const Float *dl,
+                                             const Float *d, const Float *du,
+                                             const Float *dw, Float *x,
+                                             size_t n_sys, size_t sys_size,
+                                             size_t stride, size_t run_len,
+                                             int bsys) {
+  if (sys_size % ALGO3_W != 0) { return false; }
+  switch (bsys) {
+    case 2:  return algo3_strided_bsys<Float, 2 >(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
+    case 4:  return algo3_strided_bsys<Float, 4 >(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
+    case 8:  return algo3_strided_bsys<Float, 8 >(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
+    case 16: return algo3_strided_bsys<Float, 16>(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
+    case 32: return algo3_strided_bsys<Float, 32>(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
+    default: return false; // BSYS not instantiated
+  }
+}
+
+// Resolve the systems-per-block for one strided direction.  Only instantiated
+// values are accepted; anything else keeps the default rather than failing a
+// solve over a tuning knob.
+static int env_bsys(const char *name, int fallback) {
+  const char *e = std::getenv(name);
+  if (e == nullptr || e[0] == '\0') { return fallback; }
+  const int v = std::atoi(e);
+  if (v == 2 || v == 4 || v == 8 || v == 16 || v == 32) { return v; }
+  return fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -945,8 +956,7 @@ __device__ __forceinline__ void fused_transpose_load_tile(
 
 // ---------------------------------------------------------------------------
 // Algorithm 4: ADI-structure solver, precomputed shared factorization.
-// Restricted problem class, opt-in only (PENTA_XALGO / PENTA_YZALGO =
-// shared-fact); never selected by auto.
+// Restricted problem class, selected only by naming shared-fact explicitly.
 //
 // In ADI applications every line in a direction shares the same pentadiagonal
 // coefficients and only the RHS differs.  The Thomas factorization then
@@ -1127,30 +1137,30 @@ __global__ void pentadsolver_batch_yz_algo4_kernel(
 }
 
 // ---------------------------------------------------------------------------
-// Per-direction algorithm selection for the strided (y, z) solves
+// Algorithm selection
 // ---------------------------------------------------------------------------
-// y and z are selected INDEPENDENTLY.  They are not interchangeable: y walks
-// with stride N, z with stride N^2, and the same kernel can win one and lose
-// the other.
+// There is no automatic dispatch.  The kernel for each direction is named
+// explicitly, or the hardcoded default (naive, Algorithm 1) runs.
 //
-//   PENTA_YALGO / PENTA_ZALGO   select y and z independently (preferred).
-//   PENTA_YZALGO                applies to BOTH; retained for backward
-//                               compatibility with existing scripts and the
-//                               recorded benchmark report.
-// A per-direction variable wins over PENTA_YZALGO when both are set.
-// Values: legacy | thomas-pcr | shared-fact | auto   (unset == auto == legacy).
+//   PENTA_ALGO                   sets all three directions at once.
+//   PENTA_XALGO / PENTA_YALGO /  set one direction each, overriding PENTA_ALGO.
+//   PENTA_ZALGO
+//
+// x accepts   naive | transpose | thomas-pcr | shared-fact
+// y, z accept naive | thomas-pcr | shared-fact   (transpose is x only: y and z
+//             are already coalesced, so transposing them is pure added cost)
+//
+// An unrecognised name, a name the direction does not accept, or a size the
+// requested kernel has no template for is a hard error: the run stops rather
+// than quietly solving with a different kernel and mislabelling the result.
 
 enum class StridedDir { Middle, Outermost };   // y, z
 
 // ---------------------------------------------------------------------------
-// Executed-kernel record, what RAN, not what was asked for
+// Executed-kernel record
 // ---------------------------------------------------------------------------
-// A forced selector is not a guarantee.  Algorithm 3 returns false when its
-// (M, BSYS) template is not instantiated or its shared tile does not fit, and
-// Algorithm 4 refuses sizes it cannot handle; in both cases the caller falls
-// back to a different kernel.  Reporting the requested name would mislabel the
-// measurement, so each dispatch site stamps the name it actually launched and
-// the benchmark app records that.  Index: 0 = x, 1 = y, 2 = z.
+// Each dispatch site stamps the name it launched, and the benchmark app records
+// that rather than the name that was requested.  Index: 0 = x, 1 = y, 2 = z.
 namespace {
 const char *g_ran_kernel[3] = {"none", "none", "none"};
 void        note_kernel(int dir, const char *name) { g_ran_kernel[dir] = name; }
@@ -1160,21 +1170,34 @@ extern "C" const char *pentadsolver_kernel_that_ran(int dir) {
   return (dir >= 0 && dir < 3) ? g_ran_kernel[dir] : "none";
 }
 
-static const char *strided_algo_selector(StridedDir dir) {
-  const char *specific =
-      std::getenv(dir == StridedDir::Middle ? "PENTA_YALGO" : "PENTA_ZALGO");
+// Stop the run with a diagnostic.  Reached only for a selector the build cannot
+// honour, which is a configuration mistake rather than a runtime condition.
+[[noreturn]] static void penta_fail(const char *dir, const char *algo,
+                                    const char *why) {
+  std::fprintf(stderr, "[penta] %s solve: cannot run '%s': %s\n", dir, algo, why);
+  std::exit(EXIT_FAILURE);
+}
+
+// The selector for one direction.  A per-direction variable wins over
+// PENTA_ALGO; with neither set the default is naive.
+static const char *algo_selector(int dir) {
+  static const char *names[3] = {"PENTA_XALGO", "PENTA_YALGO", "PENTA_ZALGO"};
+  const char *specific = std::getenv(names[dir]);
   if (specific != nullptr && specific[0] != '\0') { return specific; }
-  const char *both = std::getenv("PENTA_YZALGO");
-  if (both != nullptr && both[0] != '\0') { return both; }
-  return "auto";
+  const char *all = std::getenv("PENTA_ALGO");
+  if (all != nullptr && all[0] != '\0') { return all; }
+  return "naive";
+}
+
+static const char *strided_algo_selector(StridedDir dir) {
+  return algo_selector(dir == StridedDir::Middle ? 1 : 2);
 }
 
 static bool strided_algo_is(StridedDir dir, const char *name) {
   return std::strcmp(strided_algo_selector(dir), name) == 0;
 }
 
-// Returns true if Algorithm 4 handled this strided batch (only when
-// explicitly requested, restricted problem class, never chosen by auto).
+// Returns true if Algorithm 4 handled this strided batch.
 template <typename Float>
 bool pentadsolver_batch_yz_algo4(const Float *ds, const Float *dl,
                                   const Float *d, const Float *du,
@@ -1326,7 +1349,9 @@ void pentadsolver_batch_outermost(const Float *__restrict__ ds,
   // --- z direction (outermost): stride N^2, run length N^2 ----------------
   constexpr StridedDir DIR = StridedDir::Outermost;
 
-  // Algorithm 4 (ADI-structure, shared coefficients), explicit opt-in only.
+  const char *sel = strided_algo_selector(DIR);
+
+  // Algorithm 4: ADI-structure solver, restricted problem class.
   if (pentadsolver_batch_yz_algo4(ds, dl, d, du, dw, x, t_n_sys, t_sys_size,
                                    /*stride=*/t_n_sys, /*run_len=*/t_n_sys,
                                    t_scratch, DIR)) {
@@ -1334,20 +1359,23 @@ void pentadsolver_batch_outermost(const Float *__restrict__ ds,
     return;
   }
 
-  // Algorithm 3 (register-resident POP-PCR, no scratch).
-  // AUTO-SELECTED for z in FP32: 4.38 ms vs Algorithm 1's 4.52 at 256^3 once
-  // BSYS=16 widens the strided reads.  The margin is much smaller than on y
-  // (27%) because stride N^2 puts every element row on its own DRAM page.
-  // FP64 stays on Algorithm 1, the redundant arithmetic is compute-bound at
-  // the 1/64 FP64 rate and costs ~44 ms.
-  const bool algo3_auto_z = (sizeof(Float) == 4) &&
-                            std::strcmp(strided_algo_selector(DIR), "auto") == 0;
-  if ((algo3_auto_z || strided_algo_is(DIR, "thomas-pcr")) &&
-      pentadsolver_batch_strided_algo3<Float, ALGO3_Z_BSYS>(
-          ds, dl, d, du, dw, x, t_n_sys, t_sys_size,
-          /*stride=*/t_n_sys, /*run_len=*/t_n_sys)) {
+  // Algorithm 3: register-resident POP-PCR, no scratch.
+  if (std::strcmp(sel, "thomas-pcr") == 0) {
+    if (!pentadsolver_batch_strided_algo3<Float>(
+            ds, dl, d, du, dw, x, t_n_sys, t_sys_size,
+            /*stride=*/t_n_sys, /*run_len=*/t_n_sys,
+            env_bsys("PENTA_Z_BSYS", ALGO3_Z_BSYS))) {
+      penta_fail("z", sel,
+                 "no template for this system size, or the shared tile exceeds "
+                 "the per-block limit");
+    }
     note_kernel(2, "thomas-pcr");
     return;
+  }
+
+  if (std::strcmp(sel, "naive") != 0) {
+    penta_fail("z", sel, "expected naive, thomas-pcr or shared-fact "
+                         "(transpose is an x-direction kernel only)");
   }
 
   size_t scratch_elems = t_n_sys * t_sys_size;
@@ -1357,7 +1385,7 @@ void pentadsolver_batch_outermost(const Float *__restrict__ ds,
 
   // Set up the execution configuration
   note_kernel(2, "naive");
-  constexpr int block_dim_x = ALGO1_Z_BLOCK;
+  const int block_dim_x = env_block("PENTA_Z_BLOCK", ALGO1_Z_BLOCK);
   int nblocks               = 1 + (static_cast<int>(t_n_sys) - 1) / block_dim_x;
   pentadsolver_batch_outermost_kernel<<<nblocks, block_dim_x>>>(
       ds, dl, d, du, dw, x, du2_g, dw2_g, x2_g, t_n_sys, t_sys_size);
@@ -1377,7 +1405,9 @@ void pentadsolver_batch_middle(const Float *__restrict__ ds,
   // --- y direction (middle): stride N, runs of N adjacent systems ---------
   constexpr StridedDir DIR = StridedDir::Middle;
 
-  // Algorithm 4 (ADI-structure, shared coefficients), explicit opt-in only.
+  const char *sel = strided_algo_selector(DIR);
+
+  // Algorithm 4: ADI-structure solver, restricted problem class.
   if (pentadsolver_batch_yz_algo4(ds, dl, d, du, dw, x,
                                    t_n_sys_in * t_n_sys_out, t_sys_size,
                                    /*stride=*/t_n_sys_in,
@@ -1386,19 +1416,23 @@ void pentadsolver_batch_middle(const Float *__restrict__ ds,
     return;
   }
 
-  // Algorithm 3 (register-resident POP-PCR, no scratch).
-  // AUTO-SELECTED for y in FP32: measured 3.19 ms vs the legacy kernel's
-  // 4.36 ms at 256^3 (7 array passes instead of 13, and the redundant
-  // arithmetic is nearly free in FP32).  FP64 stays on legacy, there the
-  // same redundancy is compute-bound at the 1/64 FP64 rate and costs ~44 ms.
-  const bool algo3_auto_y = (sizeof(Float) == 4) &&
-                            std::strcmp(strided_algo_selector(DIR), "auto") == 0;
-  if ((algo3_auto_y || strided_algo_is(DIR, "thomas-pcr")) &&
-      pentadsolver_batch_strided_algo3<Float, ALGO3_Y_BSYS>(
-          ds, dl, d, du, dw, x, t_n_sys_in * t_n_sys_out, t_sys_size,
-          /*stride=*/t_n_sys_in, /*run_len=*/t_n_sys_in)) {
+  // Algorithm 3: register-resident POP-PCR, no scratch.
+  if (std::strcmp(sel, "thomas-pcr") == 0) {
+    if (!pentadsolver_batch_strided_algo3<Float>(
+            ds, dl, d, du, dw, x, t_n_sys_in * t_n_sys_out, t_sys_size,
+            /*stride=*/t_n_sys_in, /*run_len=*/t_n_sys_in,
+            env_bsys("PENTA_Y_BSYS", ALGO3_Y_BSYS))) {
+      penta_fail("y", sel,
+                 "no template for this system size, or the shared tile exceeds "
+                 "the per-block limit");
+    }
     note_kernel(1, "thomas-pcr");
     return;
+  }
+
+  if (std::strcmp(sel, "naive") != 0) {
+    penta_fail("y", sel, "expected naive, thomas-pcr or shared-fact "
+                         "(transpose is an x-direction kernel only)");
   }
 
   size_t n_total       = t_n_sys_in * t_n_sys_out;
@@ -1409,7 +1443,7 @@ void pentadsolver_batch_middle(const Float *__restrict__ ds,
 
   // Set up the execution configuration
   note_kernel(1, "naive");
-  constexpr int block_dim_x = ALGO1_Y_BLOCK;
+  const int block_dim_x = env_block("PENTA_Y_BLOCK", ALGO1_Y_BLOCK);
   int nblocks =
       1 + (static_cast<int>(n_total) - 1) / block_dim_x;
   pentadsolver_batch_middle_kernel<<<nblocks, block_dim_x>>>(
@@ -1452,61 +1486,39 @@ void pentadsolver_gpsv_batch_x(const Float *ds, const Float *dl, const Float *d,
   size_t n_sys    = std::accumulate(t_dims + 1, t_dims + t_ndims, size_t(1), std::multiplies<>());
   size_t sys_size = static_cast<size_t>(t_dims[0]);
 
-  // -----------------------------------------------------------------------
-  // Benchmarking override: PENTA_XALGO forces a specific x-solve kernel so
-  // every algorithm can be timed head-to-head at both precisions without
-  // recompiling.  Values: naive | transpose | thomas-pcr | shared-fact | auto
-  // (unset/auto = the precision-aware production dispatch below).  A forced
-  // kernel that cannot handle the requested sys_size silently falls through
-  // to the auto path so the run never crashes.
-  // -----------------------------------------------------------------------
-  if (const char *algo = std::getenv("PENTA_XALGO")) {
-    if (std::strcmp(algo, "naive") == 0) {
-      note_kernel(0, "naive");
-      pentadsolver_batch_x(ds, dl, d, du, dw, x, n_sys, sys_size, t_buffer);
-      return;
-    }
-    if (std::strcmp(algo, "transpose") == 0) {
-      note_kernel(0, "transpose");
-      pentadsolver_batch_x_coalesced(ds, dl, d, du, dw, x, n_sys, sys_size,
-                                     t_buffer);
-      return;
-    }
-    if (std::strcmp(algo, "thomas-pcr") == 0 &&
-        pentadsolver_batch_x_algo3(ds, dl, d, du, dw, x, n_sys, sys_size)) {
-      note_kernel(0, "thomas-pcr");
-      return;
-    }
-    // Algorithm 4: ADI-structure solver (all systems share coefficients),
-    // explicit opt-in only, never auto (restricted problem class).
-    if (std::strcmp(algo, "shared-fact") == 0 && sys_size % XT_C == 0) {
-      note_kernel(0, "shared-fact");
-      pentadsolver_batch_x_algo4(ds, dl, d, du, dw, x, n_sys, sys_size,
-                                  t_buffer);
-      return;
-    }
-    // fall through to auto dispatch for unrecognised / unsupported values
-  }
+  const char *sel = algo_selector(0);
 
-  // Precision-aware dispatch:
-  //  - FP32, sys_size in {128,256,320,384,512}: Algorithm 3, whose 7-array
-  //    traffic is optimal once compute is effectively free.
-  //  - Everything else: Algorithm 2's coalesced transpose path.
-  //
-  // In FP64 the choice depends on the device's FP64 ratio rather than being
-  // hardcoded: Algorithm 3 costs 20.9 ms, which loses to Algorithm 2's 18.7 ms
-  // on a 1/64-rate part but wins on a 1/32-rate part (11.0 vs 14.5).
-  const bool fp64_favours_algo3 =
-      (sizeof(Float) == 8) && (device_fp64_ratio_denom() <= 32);
-  if ((sizeof(Float) == 4 || fp64_favours_algo3) &&
-      pentadsolver_batch_x_algo3(ds, dl, d, du, dw, x, n_sys, sys_size)) {
-    // Hybrid Thomas-PCR (Algorithm 3) handled it.
-    note_kernel(0, "thomas-pcr");
-  } else {
+  if (std::strcmp(sel, "naive") == 0) {
+    note_kernel(0, "naive");
+    pentadsolver_batch_x(ds, dl, d, du, dw, x, n_sys, sys_size, t_buffer);
+    return;
+  }
+  if (std::strcmp(sel, "transpose") == 0) {
     note_kernel(0, "transpose");
     pentadsolver_batch_x_coalesced(ds, dl, d, du, dw, x, n_sys, sys_size,
                                    t_buffer);
+    return;
   }
+  if (std::strcmp(sel, "thomas-pcr") == 0) {
+    if (!pentadsolver_batch_x_algo3(ds, dl, d, du, dw, x, n_sys, sys_size)) {
+      penta_fail("x", sel,
+                 "no template for this system size (instantiated for 128, 256, "
+                 "320, 384 and 512)");
+    }
+    note_kernel(0, "thomas-pcr");
+    return;
+  }
+  // Algorithm 4: ADI-structure solver, restricted problem class.
+  if (std::strcmp(sel, "shared-fact") == 0) {
+    if (sys_size % XT_C != 0) {
+      penta_fail("x", sel, "system size must be a multiple of 8");
+    }
+    note_kernel(0, "shared-fact");
+    pentadsolver_batch_x_algo4(ds, dl, d, du, dw, x, n_sys, sys_size, t_buffer);
+    return;
+  }
+  penta_fail("x", sel,
+             "expected naive, transpose, thomas-pcr or shared-fact");
 }
 
 template <typename Float>

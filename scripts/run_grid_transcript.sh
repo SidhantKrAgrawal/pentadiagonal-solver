@@ -3,7 +3,7 @@
 #
 #   bash scripts/run_grid_transcript.sh [GPU_ITERS] [CPU_ITERS]
 #     defaults: 50 20
-#   env: BUILD=build|build-panda   GRIDS="128 256 320 384"
+#   env: BUILD=<build dir, default build>   GRIDS="128 256 320 384"
 #
 # Every run is written out as
 #
@@ -68,7 +68,7 @@ RUN_NO=0
 TOTAL_RUNS=0
 for N in $GRIDS; do
   TOTAL_RUNS=$((TOTAL_RUNS + 12))                     # cpu: 6 threads x 2 prec
-  TOTAL_RUNS=$((TOTAL_RUNS + 2 + 2 + 2 + 2))          # naive/transpose/sf/auto
+  TOTAL_RUNS=$((TOTAL_RUNS + 2 + 2 + 2))              # naive/transpose/shared-fact
   case "$N" in
     128|256) TOTAL_RUNS=$((TOTAL_RUNS + 6)) ;;        # 3 lanes x 2 prec
     320)     TOTAL_RUNS=$((TOTAL_RUNS + 2)) ;;
@@ -194,16 +194,12 @@ gpu_run() {
       ranx="$(echo "$c" | cut -d, -f3)"
       rany="$(echo "$c" | cut -d, -f5)"
       ranz="$(echo "$c" | cut -d, -f7)"
-      # "auto" asks for no particular kernel, so there is nothing to honour;
-      # the interesting question there is only which kernels it picked.
+      # With no automatic dispatch the selector is the kernel, so this is a
+      # cross-check against the solver's own record rather than a real question.
       local honoured=yes
-      if [ "$sel" = "auto" ]; then
-        honoured="n/a"
-      else
-        [ "$ranx" = "$sel" ] || honoured=no
-        [ "$rany" = "$yz"  ] || honoured=no
-        [ "$ranz" = "$yz"  ] || honoured=no
-      fi
+      [ "$ranx" = "$sel" ] || honoured=no
+      [ "$rany" = "$yz"  ] || honoured=no
+      [ "$ranz" = "$yz"  ] || honoured=no
       echo "$label,$N,$prec,$lanes,$(echo "$c" | cut -d, -f2,3,5,7,10,12,13,14),ok,$honoured" >> "$GPUCSV"
       echo "$c" | awk -F, -v h="$honoured" -v rx="$ranx" -v ry="$rany" -v rz="$ranz" \
         '{printf "\nRESULT:\n  x = %8.3f ms    y = %8.3f ms    z = %8.3f ms    TOTAL(end-to-end wall) = %9.3f ms\n  kernels that ran: x=%s y=%s z=%s   request honoured: %s\n",$12,$13,$14,$10,rx,ry,rz,h}' >> "$TR"
@@ -253,15 +249,6 @@ echo ">> [5/5] Shared-Factorisation"
 for N in $GRIDS; do for prec in double float; do
   pl=$([ "$prec" = double ] && echo FP64 || echo FP32)
   gpu_run shared-fact shared-fact "$N" "$prec" - "ALGO 4  Shared-Factorisation  |  N=$N  |  $pl"
-done; done
-
-# Production dispatch: what a caller gets with no environment variable set.
-# Recorded separately because it is a CONFIGURATION, not an algorithm, its
-# x, y and z may come from three different kernels.
-echo ">> [+] auto dispatch (production default)"
-for N in $GRIDS; do for prec in double float; do
-  pl=$([ "$prec" = double ] && echo FP64 || echo FP32)
-  gpu_run auto auto "$N" "$prec" - "REFERENCE  auto dispatch (production default)  |  N=$N  |  $pl"
 done; done
 
 rm -f "$OUT/.last.txt"

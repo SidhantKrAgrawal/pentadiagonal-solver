@@ -8,6 +8,7 @@ CMakeUserPresets.json
 
 # Everything the measurement scripts write
 results/
+pentadsolver_*.tar.gz
 
 # Prerequisites / objects / libs / executables
 *.d

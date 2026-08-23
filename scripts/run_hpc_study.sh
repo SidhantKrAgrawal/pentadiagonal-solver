@@ -24,14 +24,17 @@
 #     (the downloads cache into the build dir; compiling and running are then
 #     fine on an offline compute node).
 #  2. No nvcc.  module load cuda   (or add $CUDA_HOME/bin to PATH).
-#  3. Building on a login node with no GPU.  Handled: this script defaults to a
-#     fat binary for sm_70 AND sm_90 (V100 and H100), so it does not need to
-#     see a GPU at build time.  Override with e.g.  CUDA_ARCH=80 (A100).
+#  3. Building on a login node with no GPU.  Handled: with no GPU visible the
+#     script builds a fat binary covering the common datacentre and consumer
+#     architectures, so it still produces a runnable binary.  Name the target
+#     explicitly with e.g.  CUDA_ARCH=80 (A100) if that is known.
 #
 # -----------------------------------------------------------------------------
 # KNOBS (all optional)
 # -----------------------------------------------------------------------------
-#   CUDA_ARCH="70;90"   compute capabilities to build for (default: 70;90)
+#   CUDA_ARCH=86        compute capabilities to build for.  The default is the
+#                       compute capability of whatever GPU this node has; with
+#                       no GPU visible it falls back to a fat binary.
 #   GRIDS="128 256 320 384"     problem sizes N (cube N^3)
 #                       add 512 if the card has >=32 GB:  GRIDS="128 256 320 384 512"
 #   GPU_ITERS=50        timed ADI iterations per measurement
@@ -48,7 +51,8 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || { echo "cannot cd to repo root"; exit 1; }
 
-CUDA_ARCH="${CUDA_ARCH:-70;90}"
+# Resolved once the visible GPU is known, unless the caller named one.
+CUDA_ARCH="${CUDA_ARCH:-}"
 GRIDS="${GRIDS:-128 256 320 384}"
 GPU_ITERS="${GPU_ITERS:-50}"
 JOBS="${JOBS:-$( (nproc 2>/dev/null) || echo 8 )}"
@@ -123,6 +127,20 @@ VISIBLE_CC=""
 if command -v nvidia-smi >/dev/null 2>&1; then
   VISIBLE_CC="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
                 | tr -d ' .' | sort -u | tr '\n' ' ')"
+fi
+
+# Default to exactly the GPU in front of us.  Building for one architecture is
+# faster than a fat binary and cannot pick the wrong one.  With no GPU visible
+# there is nothing to detect, so cover the usual targets instead.
+if [ -z "$CUDA_ARCH" ]; then
+  if [ -n "${VISIBLE_CC// /}" ]; then
+    CUDA_ARCH="$(echo "$VISIBLE_CC" | tr -s ' ' | sed 's/ *$//' | tr ' ' ';')"
+    say "note: building for this node's GPU, compute capability $CUDA_ARCH"
+  else
+    CUDA_ARCH="70;80;86;90"
+    say "note: no GPU visible here, building a fat binary for $CUDA_ARCH"
+    say "      (name the target with CUDA_ARCH=<cc> if it is known)"
+  fi
 fi
 
 if command -v nvcc >/dev/null 2>&1 && [ "$CUDA_ARCH" != "native" ]; then
@@ -344,13 +362,9 @@ fi
 # -----------------------------------------------------------------------------
 # 4. The sweep
 #
-# Every algorithm is requested EXPLICITLY rather than through the library's
-# automatic dispatch.  That is deliberate: the auto-dispatcher was tuned on
-# consumer GPUs whose FP64 runs at 1/32 or 1/64 of FP32, and on a datacentre
-# part (1/2) some of its choices are expected to be wrong.  Measuring the
-# dispatcher instead of the algorithms would measure that mistuning.  The
-# `auto` rows are recorded too, as a separate reference line, so the gap
-# between "what a caller gets today" and "what the best kernel does" is visible.
+# Every algorithm is requested EXPLICITLY.  The solver has no automatic
+# dispatch: a direction runs the kernel it is given, and the hardcoded default
+# with nothing set is naive.
 #
 # Every row records the kernel that ACTUALLY ran.  Requests can be declined --
 # an uninstantiated tile size or one that will not fit the register/shared
@@ -378,8 +392,7 @@ gpu_run() {
   if [ "$rc" -eq 0 ] && [ -n "$c" ]; then
     local rx ry rz honoured=yes
     rx="$(echo "$c" | cut -d, -f3)"; ry="$(echo "$c" | cut -d, -f5)"; rz="$(echo "$c" | cut -d, -f7)"
-    if [ "$xs" = auto ]; then honoured=n/a
-    else [ "$rx" = "$xs" ] && [ "$ry" = "$yz" ] && [ "$rz" = "$yz" ] || honoured=no; fi
+    [ "$rx" = "$xs" ] && [ "$ry" = "$yz" ] && [ "$rz" = "$yz" ] || honoured=no
     [ "$honoured" = no ] && NUNH=$((NUNH+1))
     echo "$label,$N,$prec,$lanes,$(echo "$c" | cut -d, -f2,3,5,7,10,12,13,14),ok,$honoured" >> "$CSV"
     printf '  %-12s N=%-4s %-6s L=%-3s  e2e %9s ms   ran x=%s y=%s z=%s%s\n' \
@@ -415,9 +428,6 @@ done; done
 
 say ""; say "-- Algorithm 4: Shared-Factorisation (assumes ADI shared coefficients) --"
 for N in $GRIDS; do for p in double float; do gpu_run shared-fact shared-fact shared-fact "$N" "$p" -; done; done
-
-say ""; say "-- Reference: the library's automatic dispatch (what a caller gets today) --"
-for N in $GRIDS; do for p in double float; do gpu_run auto auto auto "$N" "$p" -; done; done
 
 # -----------------------------------------------------------------------------
 # 5. Summary

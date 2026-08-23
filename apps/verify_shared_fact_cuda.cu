@@ -90,11 +90,9 @@ static void run(int N, const char *prec_name, int solvedim, size_t n_sample) {
 
     auto solve = [&](bool use_shared_fact, std::vector<Float> &out) {
         if (use_shared_fact) {
-            setenv("PENTA_XALGO", "shared-fact", 1);
-            setenv("PENTA_YZALGO", "shared-fact", 1);
+            setenv("PENTA_ALGO", "shared-fact", 1);
         } else {
-            unsetenv("PENTA_XALGO");
-            unsetenv("PENTA_YZALGO");
+            unsetenv("PENTA_ALGO");
         }
         check(cudaMemcpy(d_x, hb.data(), bytes, cudaMemcpyHostToDevice), "cp b");
         pentadsolver_gpsv_batch(handle, d_ds, d_dl, d_d, d_du, d_dw, d_x,
@@ -102,8 +100,7 @@ static void run(int N, const char *prec_name, int solvedim, size_t n_sample) {
         check(cudaDeviceSynchronize(), "solve");
         out.resize(n_total);
         check(cudaMemcpy(out.data(), d_x, bytes, cudaMemcpyDeviceToHost), "cp x");
-        unsetenv("PENTA_XALGO");
-        unsetenv("PENTA_YZALGO");
+        unsetenv("PENTA_ALGO");
     };
 
     std::vector<Float> x_gen, x_shared;

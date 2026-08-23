@@ -20,14 +20,14 @@ mkdir -p "$OUT"
 grab() { grep -E "total/iter:" | head -1 | awk '{print $2}'; }
 
 echo "=== GPU, ${N}^3, $ITERS iters ==============================================="
-echo "-- general-purpose solver (auto dispatch: FP32 Algorithm 3/thomas-pcr x + legacy y/z, FP64 Algorithm 2/transpose) --"
-G64=$("$APP_GPU" "$N" "$ITERS" double | tee "$OUT/gpu_general_double.txt" | grab)
-G32=$("$APP_GPU" "$N" "$ITERS" float  | tee "$OUT/gpu_general_float.txt"  | grab)
+echo "-- general-purpose solver (Algorithm 2/transpose x + Algorithm 1/naive y and z) --"
+G64=$(PENTA_XALGO=transpose "$APP_GPU" "$N" "$ITERS" double | tee "$OUT/gpu_general_double.txt" | grab)
+G32=$(PENTA_XALGO=transpose "$APP_GPU" "$N" "$ITERS" float  | tee "$OUT/gpu_general_float.txt"  | grab)
 printf "   FP64 total/iter = %s ms\n   FP32 total/iter = %s ms\n" "$G64" "$G32"
 
 echo "-- ADI-structured solver (Algorithm 4/shared-fact; all lines share coefficients) --"
-S64=$(PENTA_XALGO=shared-fact PENTA_YZALGO=shared-fact "$APP_GPU" "$N" "$ITERS" double | tee "$OUT/gpu_shared-fact_double.txt" | grab)
-S32=$(PENTA_XALGO=thomas-pcr  PENTA_YZALGO=shared-fact "$APP_GPU" "$N" "$ITERS" float  | tee "$OUT/gpu_shared-fact_float.txt"  | grab)
+S64=$(PENTA_ALGO=shared-fact "$APP_GPU" "$N" "$ITERS" double | tee "$OUT/gpu_shared-fact_double.txt" | grab)
+S32=$(PENTA_XALGO=thomas-pcr PENTA_YALGO=shared-fact PENTA_ZALGO=shared-fact "$APP_GPU" "$N" "$ITERS" float | tee "$OUT/gpu_shared-fact_float.txt" | grab)
 printf "   FP64 total/iter = %s ms\n   FP32 total/iter = %s ms  (Algorithm 3/thomas-pcr x + Algorithm 4/shared-fact y/z)\n" "$S64" "$S32"
 
 if [ -x "$APP_CPU" ]; then
@@ -40,4 +40,4 @@ fi
 
 echo
 echo "Raw outputs saved under $OUT/"
-echo "Kernel selectors: PENTA_XALGO / PENTA_YZALGO (see README 'Choosing the algorithm')."
+echo "Kernel selectors: PENTA_ALGO / PENTA_XALGO / PENTA_YALGO / PENTA_ZALGO (see README 'Choosing the algorithm')."

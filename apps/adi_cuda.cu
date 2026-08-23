@@ -23,7 +23,8 @@
 //   niters     number of timed ADI iterations (default: 10)
 //   precision  "double" or "float" (default: double)
 //
-// Algorithm selection is via PENTA_XALGO / PENTA_YZALGO (see README).
+// Algorithm selection is via PENTA_ALGO / PENTA_XALGO / PENTA_YALGO /
+// PENTA_ZALGO (see README).  The default is naive in every direction.
 
 #include "pentadsolver.hpp"
 
@@ -70,56 +71,14 @@ static const char *env_or(const char *name, const char *fallback) {
     return (v != nullptr && v[0] != '\0') ? v : fallback;
 }
 
-// The strided directions are selected independently: PENTA_YALGO / PENTA_ZALGO
-// take precedence, with PENTA_YZALGO applying to both as a fallback.  This
-// mirrors strided_algo_selector() in the solver.
-static const char *strided_selector(const char *specific_name) {
+// One selector per direction.  A per-direction variable wins over PENTA_ALGO,
+// and with neither set the default is naive.  This mirrors algo_selector() in
+// the solver; with no automatic dispatch the selector IS the kernel that runs,
+// and anything the build cannot honour stops the run rather than substituting.
+static const char *selector(const char *specific_name) {
     const char *specific = std::getenv(specific_name);
     if (specific != nullptr && specific[0] != '\0') { return specific; }
-    return env_or("PENTA_YZALGO", "auto");
-}
-
-// Resolve "auto" to the kernel the production dispatch actually selects, so
-// the traffic model matches what really ran.
-//
-// An unrecognised selector falls through to the auto path inside the solver,
-// so it must resolve here too, otherwise the banner and the CSV would name a
-// kernel that did not run, and array_passes_x() would apply the wrong traffic
-// model to it.
-static bool is_known_x_algo(const char *a) {
-    return std::strcmp(a, "naive")  == 0 || std::strcmp(a, "transpose")  == 0 ||
-           std::strcmp(a, "thomas-pcr")  == 0 || std::strcmp(a, "shared-fact") == 0;
-}
-
-static const char *resolve_x_algo(const char *requested, bool is_fp32) {
-    if (std::strcmp(requested, "auto") != 0 && is_known_x_algo(requested)) {
-        return requested;
-    }
-    if (is_fp32) { return "thomas-pcr"; }
-    // FP64 x is chosen from the device's FP64:FP32 ratio, Algorithm 3 wins
-    // wherever FP64 is not crippled, Algorithm 2 where it is.  This mirrors
-    // device_fp64_ratio_denom() in pentadsolver_gpsv_batch_x; keep in step.
-    int dev = 0;
-    int major = 0;
-    int minor = 0;
-    if (cudaGetDevice(&dev) != cudaSuccess) { return "transpose"; }
-    cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev);
-    cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev);
-    switch (major * 10 + minor) {
-        case 86: case 87: case 89: return "transpose";  // 1/64 FP64
-        default:                   return "thomas-pcr";  // 1/32 or better
-    }
-}
-
-// Both strided directions auto-select Algorithm 3 in FP32 (measured wins:
-// y 3.19 vs 4.36 ms, z 4.38 vs 4.52 ms).  FP64 stays on Algorithm 1, where
-// the redundant arithmetic is compute-bound.  Algorithm 4 is opt-in.
-static const char *resolve_strided_algo(const char *requested, bool is_fp32) {
-    const bool known = std::strcmp(requested, "naive") == 0 ||
-                       std::strcmp(requested, "thomas-pcr")  == 0 ||
-                       std::strcmp(requested, "shared-fact") == 0;
-    if (std::strcmp(requested, "auto") != 0 && known) { return requested; }
-    return is_fp32 ? "thomas-pcr" : "naive";
+    return env_or("PENTA_ALGO", "naive");
 }
 
 static int array_passes_x(const char *algo) {
@@ -133,7 +92,7 @@ static int array_passes_x(const char *algo) {
 static int array_passes_strided(const char *algo) {
     if (std::strcmp(algo, "shared-fact") == 0) { return 4; }
     if (std::strcmp(algo, "thomas-pcr")  == 0) { return 7; } // register-resident, no scratch
-    return 13;  // legacy strided: 6 rd + 3 scratch wr + 3 scratch rd + 1 wr
+    return 13;  // naive strided: 6 rd + 3 scratch wr + 3 scratch rd + 1 wr
 }
 
 // Algorithm 1 (naive) is uncoalesced: its NOMINAL traffic is 7 arrays but the
@@ -286,7 +245,10 @@ static double detect_peak_bw() {
             return (double)mem_khz * 1e3 * 2.0 * ((double)bus_bits / 8.0);
         }
     }
-    return 224.0e9;   // fallback: RTX 3050 GDDR6 peak
+    // The query failed.  Returning some other card's number would silently
+    // scale every percentage in the report, so report unknown instead and let
+    // the caller drop the percentages.
+    return 0.0;
 }
 
 static void print_direction_line(const char *label, double ms, int passes,
@@ -296,10 +258,14 @@ static void print_direction_line(const char *label, double ms, int passes,
     const double bw     = passes * elem_bytes / secs;
     const double bw_vis = 7.0 * elem_bytes / secs;
 
-    if (model_meaningful) {
+    if (model_meaningful && peak_bw > 0.0) {
         printf("    %-11s %8.3f ms   BW: %6.1f GB/s (%4.1f%% peak, %2d passes)"
                "  [vis: %5.1f GB/s]\n",
                label, ms, bw / 1e9, bw / peak_bw * 100.0, passes, bw_vis / 1e9);
+    } else if (model_meaningful) {
+        printf("    %-11s %8.3f ms   BW: %6.1f GB/s (%2d passes)"
+               "  [vis: %5.1f GB/s]\n",
+               label, ms, bw / 1e9, passes, bw_vis / 1e9);
     } else {
         printf("    %-11s %8.3f ms   BW:  n/a (uncoalesced: effective traffic"
                " >> nominal)  [vis: %5.1f GB/s]\n",
@@ -327,7 +293,6 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
         if (v >= 0) { NWARMUP = v; }
     }
     const int NDIMS   = 3;
-    const bool is_fp32 = (sizeof(Float) == 4);
 
     // Diagonally dominant coefficients: |d| = 5 > |ds|+|dl|+|du|+|dw| = 4
     const Float D_VAL = Float(5.0);
@@ -336,12 +301,13 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     size_t bytes   = n_total * sizeof(Float);
     int    dims[3] = {N, N, N};
 
-    const char *req_x = env_or("PENTA_XALGO", "auto");
-    const char *req_y = strided_selector("PENTA_YALGO");
-    const char *req_z = strided_selector("PENTA_ZALGO");
-    const char *eff_x = resolve_x_algo(req_x, is_fp32);
-    const char *eff_y = resolve_strided_algo(req_y, is_fp32);
-    const char *eff_z = resolve_strided_algo(req_z, is_fp32);
+    const char *req_x = selector("PENTA_XALGO");
+    const char *req_y = selector("PENTA_YALGO");
+    const char *req_z = selector("PENTA_ZALGO");
+    // Replaced after the warm-up with what the solver reports it launched.
+    const char *eff_x = req_x;
+    const char *eff_y = req_y;
+    const char *eff_z = req_z;
 
     // The device banner is QUERIED, never hardcoded: this binary is built and
     // run on more than one GPU (sm_86 and sm_61), and a stale hardcoded name
@@ -442,22 +408,6 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     eff_z = pentadsolver_kernel_that_ran(2);
     printf("Kernels that actually ran: x=%s  y=%s  z=%s\n", eff_x, eff_y,
            eff_z);
-    {
-        // A request that was not honoured is a silent measurement error unless
-        // it is said out loud, the run still produces a plausible-looking
-        // number, just for a different kernel.
-        const char *req[3] = {req_x, req_y, req_z};
-        const char *got[3] = {eff_x, eff_y, eff_z};
-        const char  dir[3] = {'x', 'y', 'z'};
-        for (int i = 0; i < 3; i++) {
-            if (std::strcmp(req[i], "auto") != 0 &&
-                std::strcmp(req[i], got[i]) != 0) {
-                printf("  !! WARNING: %c requested '%s' but ran '%s' "
-                       "(unsupported at this size/precision -- fell back)\n",
-                       dir[i], req[i], got[i]);
-            }
-        }
-    }
     printf("\n");
 
     // ------------------------------------------------------------------
@@ -480,9 +430,15 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
         (t.e2e_events_ms > 0.0) ? (overhead / t.e2e_events_ms * 100.0) : 0.0;
 
     printf("GPU timings (avg over %d iterations):\n", NITERS);
-    printf("  ('%% peak' is against %.1f GB/s%s)\n\n", peak_bw / 1e9,
-           getenv("PENTA_PEAK_BW_GBS") != nullptr ? ", set by PENTA_PEAK_BW_GBS"
-                                                  : ", detected from device");
+    if (peak_bw > 0.0) {
+        printf("  ('%% peak' is against %.1f GB/s%s)\n\n", peak_bw / 1e9,
+               getenv("PENTA_PEAK_BW_GBS") != nullptr
+                   ? ", set by PENTA_PEAK_BW_GBS"
+                   : ", detected from device");
+    } else {
+        printf("  (peak bandwidth could not be read from the device, so no"
+               " %% peak is shown.\n   Set PENTA_PEAK_BW_GBS to supply it.)\n\n");
+    }
     printf("  END-TO-END (one full ADI iteration, x+y+z back-to-back):\n");
     printf("    %-11s %8.3f ms   <-- headline (incl. launch overhead)\n",
            "wall clock:", t.e2e_wall_ms);
@@ -509,57 +465,17 @@ static void run_adi(int N, int NITERS, const char *precision_name) {
     printf("  %-12s %8.3f ms   (end-to-end wall clock)\n", "total/iter:",
            t.e2e_wall_ms);
 
-    // Machine-readable summary for the algorithm sweep script.  Each
-    // direction reports the selector it was given and the kernel that ran
-    // (they differ only when the selector is "auto").
+    // Machine-readable summary for the algorithm sweep script.  Each direction
+    // reports the selector it was given and the kernel the solver launched.
     printf("\nCSV,%s,%s,%s,%s,%s,%s,%s,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f\n",
            req_x, eff_x, req_y, eff_y, req_z, eff_z, precision_name, N,
            t.e2e_wall_ms, t.e2e_events_ms, t.x_ms, t.y_ms, t.z_ms, sum_parts,
            overhead_pct);
 
-    // CPU reference, per precision.  NOTE: these were measured with the
-    // OpenMP+AVX2 CPU library at its saturated multi-core throughput
-    // (6 threads; scaling saturates at T=4, the i5-9500 is memory-bound
-    // at ~20 GB/s STREAM triad).  These are per-direction figures from a
-    // separate tool, so their "total" is a sum and carries the same caveat
-    // as above; it is shown only as an order-of-magnitude reference.
-    // These constants were measured at N=256 on cobra-01 (Intel i5-9500).
-    // They are NOT valid at other sizes and NOT valid on another machine, so
-    // the comparison is suppressed unless this run matches the size they were
-    // taken at.  (Previously they were printed for every N, which produced a
-    // meaningless "68.79x speedup" at N=64.)
-    if (N != 256) {
-        printf("\nCPU baseline: not shown, the built-in reference was measured"
-               " at 256^3 on cobra-01\n  (Intel i5-9500) and does not apply to"
-               " %d^3.  Measure this machine with apps/adi_cpu.\n", N);
-        pentadsolver_destroy(&handle);
-        cudaFree(d_ds); cudaFree(d_dl); cudaFree(d_d);
-        cudaFree(d_du); cudaFree(d_dw); cudaFree(d_x);
-        if (d_buf != nullptr) { cudaFree(d_buf); }
-        return;
-    }
-
-    double cpu_x, cpu_y, cpu_z;
-    if (sizeof(Float) == 8) {
-        cpu_x = 36.10; cpu_y = 62.42; cpu_z = 151.21;   // FP64, 6 threads
-    } else {
-        cpu_x = 18.16; cpu_y = 25.01; cpu_z = 76.17;    // FP32, 6 threads
-    }
-    const double cpu_total = cpu_x + cpu_y + cpu_z;
-
-    printf("\nCPU baseline (%s, %d^3, OpenMP+AVX2 Thomas, 6 threads, measured"
-           " on cobra-01 i5-9500, reference only):\n", precision_name, N);
-    printf("  pentad_x:  %6.2f ms\n", cpu_x);
-    printf("  pentad_y:  %6.2f ms\n", cpu_y);
-    printf("  pentad_z:  %6.2f ms\n", cpu_z);
-    printf("  sum:       %6.2f ms\n", cpu_total);
-
-    printf("\nGPU speedup vs CPU:\n");
-    printf("  pentad_x:  %5.2fx\n", cpu_x / t.x_ms);
-    printf("  pentad_y:  %5.2fx\n", cpu_y / t.y_ms);
-    printf("  pentad_z:  %5.2fx\n", cpu_z / t.z_ms);
-    printf("  overall:   %5.2fx  (CPU sum vs GPU end-to-end)\n",
-           cpu_total / t.e2e_wall_ms);
+    // No CPU baseline is printed here.  It used to be a table of constants
+    // measured on one particular machine at one particular size, which is
+    // wrong everywhere else.  scripts/run_benchmarks.sh runs apps/adi_cpu on
+    // whatever machine this is and prints the two side by side.
 
     // ------------------------------------------------------------------
     // Cleanup

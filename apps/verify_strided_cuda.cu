@@ -1,19 +1,19 @@
 // verify_strided_cuda.cu: correctness validator for the strided (y, z)
 // direction kernels.
 //
-// The fixed Catch2 suite only exercises the default auto dispatch, which uses
-// the legacy strided kernel for y and z.  Any opt-in strided kernel therefore
-// needs its own check before its timings can be trusted.
+// The fixed Catch2 suite only exercises the default, which is the naive
+// strided kernel for y and z.  Any other strided kernel therefore needs its own
+// check before its timings can be trusted.
 //
 // For the requested direction this tool:
 //   1. builds a random, strictly diagonally dominant pentadiagonal system on
 //      every line of an N^3 grid (so the system is well conditioned and the
 //      solve is unique),
-//   2. solves it with the legacy kernel (PENTA_YALGO/PENTA_ZALGO=legacy),
+//   2. solves it with the naive kernel (PENTA_YALGO/PENTA_ZALGO=naive),
 //   3. re-uploads the identical RHS and solves with the kernel under test,
 //   4. reports, over the FULL grid:
 //        - the backward residual max|A*x - b| for each solve, and
-//        - max|x_test - x_legacy|.
+//        - max|x_test - x_naive|.
 //   The full-grid comparison is what catches system-mixing bugs (a kernel
 //   that solves each line correctly but attributes lines to the wrong system
 //   still shows a small residual per line yet a large cross-kernel diff).
@@ -21,7 +21,7 @@
 // Usage: ./verify_strided_cuda [N] [double|float] [dir 1|2] [algo]
 //   N     grid size per dimension          (default 256)
 //   dir   1 = y (middle, stride N), 2 = z (outermost, stride N^2)  (default 1)
-//   algo  kernel under test: thomas-pcr | shared-fact                        (default thomas-pcr)
+//   algo  kernel under test: thomas-pcr                        (default thomas-pcr)
 
 #include "pentadsolver.hpp"
 
@@ -133,8 +133,8 @@ static int run(int N, int dir, const char *algo) {
         unsetenv(dir_env);
     };
 
-    std::vector<Float> x_legacy, x_test;
-    solve_with("legacy", x_legacy);
+    std::vector<Float> x_naive, x_test;
+    solve_with("naive", x_naive);
     solve_with(algo,     x_test);
 
     // ---------------------------------------------------------------
@@ -163,18 +163,18 @@ static int run(int N, int dir, const char *algo) {
         return worst;
     };
 
-    const double r_legacy = residual(x_legacy);
+    const double r_naive = residual(x_naive);
     const double r_test   = residual(x_test);
 
     double max_diff = 0.0;
     for (size_t i = 0; i < n_total; i++) {
-        const double diff = std::fabs((double)x_test[i] - (double)x_legacy[i]);
+        const double diff = std::fabs((double)x_test[i] - (double)x_naive[i]);
         if (diff > max_diff) max_diff = diff;
     }
 
-    printf("  backward resid legacy = %.3e\n", r_legacy);
+    printf("  backward resid naive = %.3e\n", r_naive);
     printf("  backward resid %-6s = %.3e\n", algo, r_test);
-    printf("  max|%s - legacy|%*s= %.3e   (full grid, %zu elements)\n",
+    printf("  max|%s - naive|%*s= %.3e   (full grid, %zu elements)\n",
            algo, (int)(6 - strlen(algo)) > 0 ? (int)(6 - strlen(algo)) : 0, "",
            max_diff, n_total);
 
@@ -199,6 +199,23 @@ int main(int argc, char **argv) {
 
     if (dir != 1 && dir != 2) {
         fprintf(stderr, "dir must be 1 (y) or 2 (z)\n");
+        return 1;
+    }
+    // This tool gives every line its own random coefficients, which is the case
+    // shared-fact is not defined for: it factorises system 0 once and reuses it
+    // for all of them.  Comparing the two here measures the problem being wrong
+    // for the kernel, not the kernel being wrong.  verify_shared_fact_cuda
+    // builds the shared-coefficient case and is the tool for that kernel.
+    if (std::strcmp(algo, "shared-fact") == 0) {
+        fprintf(stderr,
+                "verify_strided_cuda cannot validate shared-fact: it builds "
+                "per-line random coefficients,\nwhich shared-fact does not "
+                "solve.  Use verify_shared_fact_cuda %d %s %d instead.\n",
+                N, prec, dir);
+        return 2;
+    }
+    if (std::strcmp(algo, "thomas-pcr") != 0) {
+        fprintf(stderr, "algo must be thomas-pcr\n");
         return 1;
     }
     if (std::strcmp(prec, "float") == 0)  { return run<float>(N, dir, algo); }

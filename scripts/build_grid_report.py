@@ -28,7 +28,6 @@ PRETTY = {
     "transpose":   "Algo 2  Global-Transpose",
     "thomas-pcr":  "Algo 3  Hybrid Thomas-PCR",
     "shared-fact": "Algo 4  Shared-Factorisation",
-    "auto":        "        auto (production)",
 }
 PREC = {"double": "FP64", "float": "FP32"}
 
@@ -100,6 +99,11 @@ def cpu_tables(data, w):
 
 
 def gpu_rows(data, host, N, prec, algo):
+    # A host that was not run at all is not an error: the report is assembled
+    # from whatever transcripts exist, and sections that need a missing host
+    # say so rather than failing.
+    if host not in data:
+        return []
     return [r for r in data[host]["gpu"]
             if r["algo"] == algo and r["N"] == N and r["precision"] == prec
             and r["status"] == "ok"]
@@ -128,7 +132,7 @@ def gpu_tables(data, w):
               ("N", "algorithm", "lanes", "x_ms", "y_ms", "z_ms", "TOTAL_ms"))
             w("  " + hr("-", 96))
             for N in ("128", "256", "320", "384"):
-                for algo in ALGOS + ["auto"]:
+                for algo in ALGOS:
                     rows = gpu_rows(data, host, N, prec, algo)
                     if not rows:
                         bad = [r for r in data[host]["gpu"]
@@ -138,13 +142,13 @@ def gpu_tables(data, w):
                         w("  %-5s %-28s %6s %11s %11s %11s %12s" %
                           (N, PRETTY[algo], "-", "-", "-", "-", st))
                         continue
-                    ok = [r for r in rows if r["honoured"] in ("yes", "n/a")]
+                    ok = [r for r in rows if r["honoured"] == "yes"]
                     r = min(ok or rows, key=lambda r: f(r["e2e_wall_ms"]))
                     mixed = "" if ok else "*"
 
                     def mark(axis):
                         ran = r["%s_kernel" % axis]
-                        if algo in ("auto", ran):
+                        if algo == ran:
                             return ""
                         return "(n)" if ran == "naive" else "(%s)" % ran[:3]
 
@@ -374,114 +378,144 @@ def cpu_vs_gpu(data, w):
         w("")
 
 
+def gpu_name(data, host):
+    """GPU model for a host, read from its recorded environment."""
+    env = data.get(host, {}).get("env", "")
+    for line in env.splitlines():
+        if "NVIDIA" in line or "Tesla" in line or "Quadro" in line:
+            return line.split(",")[0].strip()
+    return host
+
+
+def ref_grid(data, host):
+    """The largest grid this host actually produced GPU rows for."""
+    ns = sorted({int(r["N"]) for r in data.get(host, {}).get("gpu", [])
+                 if r["status"] == "ok"})
+    return str(ns[-1]) if ns else None
+
+
 def one_liners(data, w, picks):
-    """The one-line-per-algorithm reading of the tables, with the numbers that
-    justify each line pulled from the data rather than typed in."""
+    """Per-algorithm reading of the tables.  Every number and every machine
+    name comes from the data, so this works for one host or several, on
+    whatever GPUs they happen to have."""
 
     def gv(host, N, prec, algo, key, lanes=None):
         rows = [r for r in gpu_rows(data, host, N, prec, algo)
                 if lanes is None or r["lanes"] == lanes]
         rows = [r for r in rows if f(r[key]) is not None]
-        return min(f(r[key]) for r in rows) if rows else float("nan")
+        return min(f(r[key]) for r in rows) if rows else None
+
+    def fmt(v, nd=2):
+        return "n/a" if v is None else ("%.*f" % (nd, v))
 
     w(hr())
     w("ANALYSIS: ONE LINE PER ALGORITHM")
     w(hr())
     w("")
-    w("(all figures 256^3 unless stated; cobra-01 = RTX 3050 sm_86, FP64 at 1/64")
-    w(" rate; panda-01 = GTX 1080 sm_61, FP64 at 1/32 rate)")
-    w("")
 
-    c = lambda *a, **k: gv("cobra-01", *a, **k)
-    p = lambda *a, **k: gv("panda-01", *a, **k)
+    hosts = sorted(data)
+    if not hosts:
+        w("  No machines in this run.")
+        w("")
+        return
 
-    w("ALGO 1  GPU Naive")
-    w("  Uncoalesced x-solve dominates everything: x = %.1f ms vs y/z %.1f/%.1f ms"
-      % (c("256", "double", "naive", "x_ms"), c("256", "double", "naive", "y_ms"),
-         c("256", "double", "naive", "z_ms")))
-    w("  on cobra FP64, %.1fx a single strided direction, %.0f%% of the whole"
-      % (c("256", "double", "naive", "x_ms") / c("256", "double", "naive", "y_ms"),
-         100.0 * c("256", "double", "naive", "x_ms") /
-         c("256", "double", "naive", "e2e_wall_ms")))
-    w("  iteration, because a thread-per-system walk along x reads a full cache")
-    w("  sector to use one element of it.")
-    w("  Its y/z are respectable, though: it is a bad x-kernel, not a bad kernel.")
-    w("")
+    for host in hosts:
+        N = ref_grid(data, host)
+        if N is None:
+            w("%s: no successful GPU rows." % host)
+            w("")
+            continue
 
-    w("ALGO 2  Global-Transpose")
-    w("  Fixes exactly that: x %.1f -> %.1f ms on cobra FP64 (%.1fx) by transposing"
-      % (c("256", "double", "naive", "x_ms"), c("256", "double", "transpose", "x_ms"),
-         c("256", "double", "naive", "x_ms") / c("256", "double", "transpose", "x_ms")))
-    w("  into a coalesced layout, and it pays 27 array passes to do it, about half")
-    w("  the remaining x-time is the transpose itself, not the solve.  Scales")
-    w("  cleanly to N=384 and is the FP64 x-default on the 1/64-rate card.")
-    w("")
+        w("MACHINE %s  (%s)   figures below are %s^3" % (host, gpu_name(data, host), N))
+        w("")
+        for prec, plabel in (("double", "FP64"), ("float", "FP32")):
+            rows = []
+            for algo in ALGOS:
+                x = gv(host, N, prec, algo, "x_ms")
+                if x is None:
+                    continue
+                rows.append((algo, x, gv(host, N, prec, algo, "y_ms"),
+                             gv(host, N, prec, algo, "z_ms"),
+                             gv(host, N, prec, algo, "e2e_wall_ms")))
+            if not rows:
+                w("  %s: no rows." % plabel)
+                continue
+            w("  %s   %-28s %9s %9s %9s %11s" %
+              (plabel, "algorithm", "x_ms", "y_ms", "z_ms", "e2e_ms"))
+            for algo, x, y, z, e in rows:
+                w("         %-28s %9s %9s %9s %11s" %
+                  (PRETTY[algo], fmt(x), fmt(y), fmt(z), fmt(e)))
 
-    w("ALGO 3  Hybrid Thomas-PCR (SPIKE)")
-    w("  The precision-split kernel: FP32 x = %.2f ms (best general x anywhere on"
-      % c("256", "float", "thomas-pcr", "x_ms"))
-    w("  cobra) but FP64 x = %.1f ms, because its ~5x redundant arithmetic is free"
-      % c("256", "double", "thomas-pcr", "x_ms"))
-    w("  in FP32 and compute-bound at 1/64 FP64.  On panda's 1/32 FP64 the same")
-    w("  kernel costs %.1f ms, the ratio tracks the hardware, not the algorithm."
-      % p("256", "double", "thomas-pcr", "x_ms"))
-    w("  It is an x-specialist: its FP64 y/z (%.0f/%.0f ms) lose to naive's %.0f/%.0f."
-      % (c("256", "double", "thomas-pcr", "y_ms"), c("256", "double", "thomas-pcr", "z_ms"),
-         c("256", "double", "naive", "y_ms"), c("256", "double", "naive", "z_ms")))
-    w("")
-    w("  LANES (Table 3), the tuning knob, and it is architecture-dependent:")
-    w("    FP64: cobra prefers L=8 (%.1f vs %.1f ms at L=16), panda prefers L=16"
-      % (c("256", "double", "thomas-pcr", "x_ms", "8"),
-         c("256", "double", "thomas-pcr", "x_ms", "16")))
-    w("          (%.1f vs %.1f at L=8), sm_86's 128 KB unified L1/shared absorbs"
-      % (p("256", "double", "thomas-pcr", "x_ms", "16"),
-         p("256", "double", "thomas-pcr", "x_ms", "8")))
-    w("          the register spilling that L=8 causes; Pascal's does not.")
-    w("    FP32: L=32 on both (%.2f cobra / %.2f panda); L=8 collapses to %.1f ms"
-      % (c("256", "float", "thomas-pcr", "x_ms", "32"),
-         p("256", "float", "thomas-pcr", "x_ms", "32"),
-         c("256", "float", "thomas-pcr", "x_ms", "8")))
-    w("          on cobra, a 5x penalty for the wrong knob at the same N.")
-    w("    => the lane count should be chosen by (architecture, precision), not by")
-    w("       precision alone as the current default does.")
-    w("")
+            # Winners, excluding the restricted-class kernel from "general".
+            gen = [r for r in rows if r[0] != "shared-fact"]
+            if gen:
+                bx = min(gen, key=lambda r: r[1])
+                w("         best general x: %s (%s ms)" % (PRETTY[bx[0]].strip(), fmt(bx[1])))
+                ygen = [r for r in gen if r[2] is not None]
+                zgen = [r for r in gen if r[3] is not None]
+                if ygen:
+                    by = min(ygen, key=lambda r: r[2])
+                    w("         best general y: %s (%s ms)" % (PRETTY[by[0]].strip(), fmt(by[2])))
+                if zgen:
+                    bz = min(zgen, key=lambda r: r[3])
+                    w("         best general z: %s (%s ms)" % (PRETTY[bz[0]].strip(), fmt(bz[3])))
+            sf = [r for r in rows if r[0] == "shared-fact"]
+            if sf and gen:
+                be = min(gen, key=lambda r: (r[4] if r[4] is not None else 1e18))
+                if sf[0][4] and be[4]:
+                    w("         shared-fact (restricted class) is %.2fx the best general "
+                      "end-to-end" % (be[4] / sf[0][4]))
+            w("")
 
-    w("ALGO 4  Shared-Factorisation")
-    w("  Fastest everywhere it applies, by a wide margin, %.2f ms total on cobra"
-      % c("256", "double", "shared-fact", "e2e_wall_ms"))
-    w("  FP64 against Global-Transpose's %.1f (%.1fx), because it moves 4 arrays"
-      % (c("256", "double", "transpose", "e2e_wall_ms"),
-         c("256", "double", "transpose", "e2e_wall_ms") /
-         c("256", "double", "shared-fact", "e2e_wall_ms")))
-    w("  per direction instead of 13-27: the factorisation is computed once into a")
-    w("  5N table and broadcast, so no per-row divides and no scratch streaming.")
-    w("  CAVEAT: restricted problem class (all lines share coefficients).  It is")
-    w("  the right answer for constant-coefficient ADI and inapplicable otherwise.")
-    w("  It is also the only algorithm whose FP64 and FP32 times are close (%.2f vs"
-      % c("256", "double", "shared-fact", "e2e_wall_ms"))
-    w("  %.2f, %.2fx), at 4 arrays it is so bandwidth-lean that halving the word"
-      % (c("256", "float", "shared-fact", "e2e_wall_ms"),
-         c("256", "double", "shared-fact", "e2e_wall_ms") /
-         c("256", "float", "shared-fact", "e2e_wall_ms")))
-    w("  size stops buying much.")
-    w("")
+        # Lane sweep, if this host recorded more than one lane count.
+        for prec, plabel in (("double", "FP64"), ("float", "FP32")):
+            lanes = sorted({r["lanes"] for r in data[host]["gpu"]
+                            if r["algo"] == "thomas-pcr" and r["N"] == N
+                            and r["precision"] == prec and r["status"] == "ok"
+                            and r["lanes"] not in ("-", "")},
+                           key=lambda v: int(v) if v.isdigit() else 0)
+            if len(lanes) > 1:
+                vals = [(L, gv(host, N, prec, "thomas-pcr", "x_ms", L)) for L in lanes]
+                vals = [(L, v) for L, v in vals if v is not None]
+                if vals:
+                    best = min(vals, key=lambda t: t[1])
+                    w("  %s lanes for Hybrid Thomas-PCR on x: %s" %
+                      (plabel, ", ".join("L=%s %s ms" % (L, fmt(v)) for L, v in vals)))
+                    w("         best here: L=%s.  The lane count is a tuning knob and its"
+                      % best[0])
+                    w("         best value is a property of this GPU, so sweep it per machine.")
+        w("")
 
-    w("CPU BASELINE (OpenMP)")
-    w("  Scaling stops at 3-4 threads in FP64 on both machines (~1.8x from 6 cores)")
-    w("  and only reaches ~2.7-3.0x in FP32: the solve is memory-bound and one or")
-    w("  two cores already saturate the DRAM controller.  FP32 scales further than")
-    w("  FP64 for exactly that reason, half the bytes per element.  z is always the")
-    w("  slowest direction (stride N^2 defeats the cache), which is the mirror image")
-    w("  of the GPU, where x is the problem.")
-    w("")
-
-    w("CROSS-MACHINE")
-    w("  The GTX 1080 wins in FP64 (1/32 rate, 289 GB/s) and the RTX 3050 wins in")
-    w("  FP32, the same kernels, ranked differently by the two cards' FP64:FP32")
-    w("  ratios.  This is the dissertation's central claim reproduced at four grid")
-    w("  sizes rather than one: the right algorithm is a property of the hardware,")
-    w("  not of the problem.")
-    w("")
+    if len(hosts) > 1:
+        w(hr("-"))
+        w("ACROSS MACHINES")
+        w(hr("-"))
+        w("")
+        for prec, plabel in (("double", "FP64"), ("float", "FP32")):
+            entries = []
+            for host in hosts:
+                N = ref_grid(data, host)
+                if N is None:
+                    continue
+                gen = [(a, gv(host, N, prec, a, "x_ms")) for a in ALGOS
+                       if a != "shared-fact"]
+                gen = [(a, v) for a, v in gen if v is not None]
+                if gen:
+                    best = min(gen, key=lambda t: t[1])
+                    entries.append((host, N, best[0], best[1]))
+            if not entries:
+                continue
+            w("  %s best general x-kernel per machine:" % plabel)
+            for host, N, algo, v in entries:
+                w("    %-12s %-22s %8s ms   (%s^3, %s)" %
+                  (host, PRETTY[algo].strip(), fmt(v), N, gpu_name(data, host)))
+            winners = {e[2] for e in entries}
+            if len(winners) > 1:
+                w("    The fastest kernel is not the same on every machine, which is why")
+                w("    the solver does not choose one: name it per run.")
+            else:
+                w("    Same kernel wins on every machine measured here.")
+            w("")
 
 
 def next_run(data, w, picks):
@@ -543,18 +577,25 @@ def main():
     w("")
     w("Generated: %s" % __import__("datetime").datetime.now().isoformat(timespec="seconds"))
     w("")
+    grids = sorted({int(r["N"]) for h in data for r in data[h]["gpu"]})
+    precs = sorted({r["precision"] for h in data for r in data[h]["gpu"]})
+    threads = sorted({int(r["threads"]) for h in data for r in data[h]["cpu"]
+                      if r.get("threads", "").isdigit()})
+
     w("MATRIX")
-    w("  grids       N = 128, 256, 320, 384   (cubic, N^3)")
-    w("  precisions  FP64 (double), FP32 (float)")
-    w("  machines    cobra-01 (RTX 3050, sm_86)   panda-01 (GTX 1080, sm_61)")
-    w("  CPU         OpenMP threads 1..6")
+    w("  grids       N = %s   (cubic, N^3)" %
+      (", ".join(str(g) for g in grids) if grids else "none"))
+    w("  precisions  %s" % (", ".join(precs) if precs else "none"))
     w("  GPU         Algo 1 Naive | Algo 2 Global-Transpose |")
     w("              Algo 3 Hybrid Thomas-PCR (lane sweep) | Algo 4 Shared-Factorisation")
-    w("              + auto dispatch, recorded for reference")
+    if threads:
+        w("  CPU         OpenMP threads %d..%d" % (threads[0], threads[-1]))
     w("")
+    w("  machines")
     for host in sorted(data):
-        w("  runs on %-9s : %d CPU + %d GPU" %
-          (host, len(data[host]["cpu"]), len(data[host]["gpu"])))
+        w("    %-12s %-34s %d CPU + %d GPU runs" %
+          (host, gpu_name(data, host),
+           len(data[host]["cpu"]), len(data[host]["gpu"])))
     w("")
     w("HOW THE TIMES ARE OBTAINED  (this is the part that is easy to get wrong)")
     w("  One execution produces BOTH the total and the per-axis split:")

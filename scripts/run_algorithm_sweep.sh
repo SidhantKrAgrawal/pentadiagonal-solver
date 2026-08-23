@@ -42,9 +42,8 @@ done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-# APP is overridable so the same sweep can be run from a second build tree on a
-# different machine (e.g. APP=build-panda/apps/app_cuda for a Pascal sm_61
-# build) without disturbing the primary build/.
+# APP is overridable so the sweep can be run from a second build tree, for
+# instance one built for a different architecture, without disturbing build/.
 APP="${APP:-build/apps/app_cuda}"
 [ -x "$APP" ] || { echo "GPU app not built ($APP). Run: bash scripts/build.sh gpu"; exit 1; }
 
@@ -86,9 +85,7 @@ sel_x()  { case "$1" in 1) echo naive;; 2) echo transpose;; 3) echo thomas-pcr;;
 sel_yz() { case "$1" in 1) echo naive;; 2) echo -;;     3) echo thomas-pcr;; 4) echo shared-fact;; esac; }
 
 # Baseline held on the other directions during Phase 1.  This MUST be a
-# selector the solver actually recognises: an unrecognised value silently falls
-# through to auto dispatch, which would change every Phase-1 y and z row
-# without producing any error.
+# selector the solver recognises; an unrecognised value stops the run.
 BASE_X="transpose"
 BASE_STRIDED="naive"
 
@@ -178,7 +175,6 @@ for prec in $PRECISIONS; do
     local body; body="$(run_cfg "$2" "$3" "$4" "$prec" "$5")" || return
     printf "  %-42s %11s %11s %6s%%\n" "$1" "$(fld "$body" 9)" "$(fld "$body" 14)" "$(fld "$body" 15)"
   }
-  report "production auto dispatch" "auto" "auto" "auto" "p2_auto_${prec}"
   report "best general (Alg ${BEST_A[x]}/${BEST_A[y]}/${BEST_A[z]})" \
          "$(sel_x "${BEST_A[x]}")" "$(sel_yz "${BEST_A[y]}")" "$(sel_yz "${BEST_A[z]}")" \
          "p2_bestgen_${prec}"
