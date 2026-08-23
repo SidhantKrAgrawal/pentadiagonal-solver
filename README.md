@@ -51,16 +51,25 @@ cmake --preset cpu                   # CPU only, no CUDA toolkit needed
 cmake --preset gpu-mpi               # adds the distributed MPI library and apps
 ```
 
-The presets set CMAKE_CUDA_ARCHITECTURES=native, which auto detects the GPU of
-the machine running the configure step. On a login node with no GPU, the compute
-node's architecture has to be named explicitly:
+Nothing has to be configured per GPU. The presets set
+CMAKE_CUDA_ARCHITECTURES=native, which asks the driver what card is present and
+builds for it, and scripts/build.sh reads the same thing from nvidia-smi. Logged
+into a machine with a GPU, the commands above are the whole procedure on any
+card.
+
+The one exception is compiling somewhere that has no GPU, typically a cluster
+login node where the job later runs on a separate compute node. There is nothing
+for native to detect, so the target card is named instead:
 
 ```bash
 cmake --preset gpu -DCMAKE_CUDA_ARCHITECTURES=80
 ```
 
 Values are 70 for V100, 80 for A100, 86 for RTX 30 series, 89 for RTX 40 series
-and L40, and 90 for H100.
+and L40, and 90 for H100. A binary built for one of these does not run on
+another: it launches, then fails at the first kernel with `named symbol not
+found` or `no kernel image is available for execution`. Several can be built at
+once, as in `-DCMAKE_CUDA_ARCHITECTURES="70;90"`, which runs on either.
 
 Without presets, on CMake older than 3.21:
 
