@@ -40,14 +40,23 @@ one that does, or build the CPU-only configuration described in Step 8.
 
 ## Step 3: put CUDA on PATH
 
-Most clusters use modules:
+Most clusters use modules, but the name varies by site, so list them first
+rather than guessing:
 
 ```bash
-module avail          # lists what the site provides
-module load cuda      # or a specific one, e.g. module load CUDA/12.6.2
+module avail
 ```
 
-If there are no modules, find the toolkit and add its bin directory:
+Load one of the CUDA entries that prints. The exact name is whatever the listing
+shows, for example:
+
+```bash
+module load CUDA/12.6.2
+```
+
+A bare `module load cuda` works on some sites and fails with
+`Unable to locate a modulefile` on others. If there are no modules at all, find
+the toolkit and add its bin directory:
 
 ```bash
 export PATH=/path/to/cuda/bin:$PATH
@@ -72,6 +81,10 @@ toolkit match          yes, this nvcc can build for compute 75
 ```
 
 Both `yes` lines matter, and they fail for different reasons.
+
+**`nvcc NOT FOUND`** means Step 3 did not take effect: no CUDA is on PATH at
+all, so the nvcc lines are absent rather than reading `NO`. Go back to Step 3
+and load a toolkit.
 
 **`nvcc compiles: NO`** means the CUDA installation is incomplete: the nvcc
 binary exists but its headers do not sit beside it. A modulefile pointing at a
