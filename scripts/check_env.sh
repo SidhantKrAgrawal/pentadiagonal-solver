@@ -21,6 +21,21 @@ if have nvidia-smi; then
   CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1)
   if [ -n "${CC:-}" ]; then
     say "compute capability" "$CC  -> pass -DCMAKE_CUDA_ARCHITECTURES=${CC//./}"
+    # Newer CUDA toolkits drop older GPUs, so having both nvcc and a GPU is not
+    # enough: they have to match.  Say so here rather than at the end of a build.
+    if have nvcc; then
+      SUP="$(nvcc --list-gpu-arch 2>/dev/null | sed 's/compute_//' | tr '\n' ' ')"
+      A="${CC//./}"
+      if [ -n "${SUP// /}" ]; then
+        if echo " $SUP " | grep -q " $A "; then
+          say "toolkit match" "yes, this nvcc can build for compute $A"
+        else
+          say "toolkit match" "NO, this nvcc cannot build for compute $A"
+          echo "     it supports: $SUP"
+          echo "     load an older CUDA (12.x covers compute 50 to 90) before building."
+        fi
+      fi
+    fi
   else
     say "compute capability" "nvidia-smi too old to report it; look up the GPU's value"
   fi

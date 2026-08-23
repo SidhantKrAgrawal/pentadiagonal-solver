@@ -36,6 +36,20 @@ if [ "$PRESET" != "cpu" ]; then
     ARCH="${CC//./}"
   fi
   if [ -n "$ARCH" ]; then
+    # A CUDA toolkit only generates code for a fixed set of architectures, and
+    # newer toolkits drop older GPUs (CUDA 13 starts at compute 75, so it cannot
+    # build for a V100 or anything older).  Checking here turns a page of nvcc
+    # and CMake output into one sentence naming the fix.
+    SUPPORTED="$(nvcc --list-gpu-arch 2>/dev/null | sed 's/compute_//' | tr '\n' ' ')"
+    if [ -n "${SUPPORTED// /}" ] && ! echo " $SUPPORTED " | grep -q " $ARCH "; then
+      echo "!! This GPU is compute capability $ARCH, but the CUDA toolkit in PATH"
+      echo "   cannot generate code for it."
+      echo "     nvcc     : $(nvcc --version 2>/dev/null | grep -i release | sed 's/^ *//')"
+      echo "     supports : $SUPPORTED"
+      echo "   Load an older CUDA (a 12.x toolkit covers compute 50 to 90) and re-run:"
+      echo "     module load CUDA/12.6.2   # or whatever 12.x this site provides"
+      exit 1
+    fi
     echo ">> CUDA architecture: $ARCH"
     EXTRA+=("-DCMAKE_CUDA_ARCHITECTURES=$ARCH")
   else

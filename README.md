@@ -9,12 +9,8 @@ This README covers building, testing and running.
 ## Requirements
 
 CMake 3.21 or newer is needed for the presets, GCC 9 or newer for C++17 and
-AVX2, and the CUDA Toolkit 11 or newer for the GPU builds. OpenMP ships with
-GCC. MPI (OpenMPI or MPICH) is only needed for the gpu-mpi build.
-
-Tested with CUDA 13.0 on sm_86 and CUDA 12.6 on sm_61. CUDA 13 dropped Pascal:
-building for sm_61 or older needs a 12.x toolkit, and nvcc reports
-`Unsupported gpu architecture 'compute_61'` otherwise.
+AVX2, and a CUDA Toolkit for the GPU builds. OpenMP ships with GCC.
+check_env.sh reports whether the toolkit in PATH can build for the GPU present.
 
 The first configure downloads project_options, Catch2 and Google Benchmark from
 GitHub. On a cluster, configure on a login node; the downloads are cached in the
@@ -35,57 +31,20 @@ bash scripts/run_tests.sh gpu        # run the Catch2 correctness suites
 build/apps/app_cuda 256 50 double    # solve a 256^3 grid, 50 ADI iterations
 ```
 
-build.sh detects the GPU's compute capability from nvidia-smi. Passing cpu or
-gpu-mpi instead of gpu selects the other two configurations, which build into
-build-cpu/ and build-mpi/.
+build.sh detects the GPU's compute capability from nvidia-smi, and stops with
+an explanation if the CUDA toolkit in PATH cannot build for that GPU. Passing
+cpu instead of gpu builds the CPU-only configuration into build-cpu/.
 
-## Building without the scripts
+## Build options
 
-With CMake presets:
-
-```bash
-cmake --preset gpu                   # configure into build/
-cmake --build --preset gpu -j        # compile
-
-cmake --preset cpu                   # CPU only, no CUDA toolkit needed
-cmake --preset gpu-mpi               # adds the distributed MPI library and apps
-```
-
-Nothing has to be configured per GPU. The presets set
-CMAKE_CUDA_ARCHITECTURES=native, which asks the driver what card is present and
-builds for it, and scripts/build.sh reads the same thing from nvidia-smi. Logged
-into a machine with a GPU, the commands above are the whole procedure on any
-card.
-
-The one exception is compiling somewhere that has no GPU, typically a cluster
-login node where the job later runs on a separate compute node. There is nothing
-for native to detect, so the target card is named instead:
-
-```bash
-cmake --preset gpu -DCMAKE_CUDA_ARCHITECTURES=80
-```
-
-Values are 70 for V100, 80 for A100, 86 for RTX 30 series, 89 for RTX 40 series
-and L40, and 90 for H100. A binary built for one of these does not run on
-another: it launches, then fails at the first kernel with `named symbol not
-found` or `no kernel image is available for execution`. Several can be built at
-once, as in `-DCMAKE_CUDA_ARCHITECTURES="70;90"`, which runs on either.
-
-Without presets, on CMake older than 3.21:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_FOR_CUDA=ON -DBUILD_FOR_SN=ON -DCMAKE_CUDA_ARCHITECTURES=86
-cmake --build build -j
-```
-
-The build options are BUILD_FOR_CPU, BUILD_FOR_CUDA, BUILD_FOR_MPI,
-BUILD_FOR_SN (single node) and USE_PROFILING.
+BUILD_FOR_CPU, BUILD_FOR_CUDA, BUILD_FOR_MPI, BUILD_FOR_SN (single node) and
+USE_PROFILING are the CMake options behind the presets, for a hand-rolled
+configure.
 
 ## Testing
 
 ```bash
-bash scripts/run_tests.sh gpu        # or cpu, or gpu-mpi
+bash scripts/run_tests.sh gpu        # or cpu
 ```
 
 This runs cuda_tests and tests. Both read reference data from ./files, so they
@@ -96,11 +55,8 @@ binary directly needs a cd to the root first:
 cd <repo root> && build/test/cuda/cuda_tests
 ```
 
-The gpu and cpu presets run the single node suites, 201,388 assertions across
-10 test cases each. The gpu-mpi preset additionally runs the two MPI suites
-under mpirun, 16,385 and 100,696 assertions; set NP to change the rank count
-from the default of 2. If mpirun is not in PATH those two are skipped with a
-message rather than silently.
+Each suite is 201,388 assertions across 10 test cases, so a gpu run reports
+that figure twice, once for CUDA and once for CPU.
 
 ## Running the solver
 
@@ -112,14 +68,6 @@ direction timings and achieved bandwidth.
 build/apps/app_cuda 256 50 double        # GPU
 build/apps/adi_cpu  256 10 double        # CPU baseline
 OMP_NUM_THREADS=4 build/apps/adi_cpu 256 10 double
-```
-
-MPI, from the gpu-mpi build. It decomposes along z and prints a global
-checksum, which must agree across rank counts for the same N, iterations and
-precision:
-
-```bash
-mpirun -np 4 build-mpi/apps/adi_mpi_cpu 256 10 double
 ```
 
 The 2D lid driven cavity CFD application, on the CPU solver:
@@ -249,9 +197,9 @@ build/apps/verify_scale_cpu        320 double
 
 | Script | Arguments | What it does |
 | --- | --- | --- |
-| `build.sh` | preset (gpu, gpu-mpi, cpu) | Configures and compiles. Maps the preset to the matching CMake preset and build directory, and reads the compute capability from nvidia-smi so the architecture does not have to be known in advance. CUDA_ARCH and JOBS override. |
-| `check_env.sh` | none | Reports the cmake, g++, nvcc and MPI versions, the GPU name and compute capability, and the core count. Configures nothing. The first thing to run when a build fails. |
-| `run_tests.sh` | preset | Runs the Catch2 suites from the repository root, which is required because the test binaries read reference data from ./files. On the gpu-mpi preset it also runs the two MPI suites under mpirun; NP sets the rank count, default 2. |
+| `build.sh` | preset (gpu, cpu) | Configures and compiles. Reads the compute capability from nvidia-smi so the architecture does not have to be known in advance, and stops with an explanation if the CUDA toolkit in PATH is too new to target that GPU. CUDA_ARCH and JOBS override. |
+| `check_env.sh` | none | Reports the cmake, g++ and nvcc versions, the GPU name and compute capability, whether that nvcc can actually build for that GPU, and the core count. Configures nothing. The first thing to run when a build fails. |
+| `run_tests.sh` | preset | Runs the Catch2 suites from the repository root, which is required because the test binaries read reference data from ./files. |
 | `run_benchmarks.sh` | N, iters | Runs the full ADI solve on the GPU and the CPU for one grid size and prints the two side by side. Defaults to 256 and 50. Raw output goes under results/repro_<date>/. |
 | `run_algorithm_sweep.sh` | N, iters, precision, `--with-restricted` | The per direction comparison, in two phases. Phase 1 measures every algorithm that has a kernel for a direction while the other two are held on a fixed baseline, which makes the rows comparable. Phase 2 composes the per direction winners and measures true end to end wall time. `--with-restricted` adds shared-fact. |
 | `run_grid_transcript.sh` | gpu iters, cpu iters | Runs the same matrix across grids 128, 256, 320 and 384 in both precisions, recording each run as the command, its verbatim output and the extracted result, so every number traces back to what produced it. Also emits cpu.csv and gpu.csv. |
@@ -267,9 +215,8 @@ counters.
 
 ```
 include/pentadsolver.hpp             public C API
-src/cpu/                             CPU solver (OpenMP and AVX2) and MPI variant
+src/cpu/                             CPU solver (OpenMP and AVX2)
 src/cuda/singlenode/pentad_cuda.cu   all GPU kernels and the selector
-src/cuda/mpi/                        distributed GPU solver
 apps/                                applications and verifiers
 benchmarks/                          Google Benchmark micro benchmarks
 test/                                Catch2 suites and reference data in files/
@@ -296,10 +243,6 @@ built for the wrong architecture. Rebuild with the compute node's value.
 
 If the tests cannot open files/..., they were not started from the repository
 root. Use scripts/run_tests.sh.
-
-If cmake cannot find MPI, the compiler wrappers are not in PATH. On a Red Hat
-style system they live in /usr/lib64/openmpi/bin, which is not on PATH by
-default; add it, or load the site's MPI module.
 
 If a run stops with `[penta] x solve: cannot run ...`, the named kernel has no
 template for that system size or the direction does not accept it. Pick a size
