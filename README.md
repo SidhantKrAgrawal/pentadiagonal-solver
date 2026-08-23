@@ -25,15 +25,35 @@ bash scripts/check_env.sh
 
 ## Quick start
 
+Everything below runs on the machine that holds the GPU. On a cluster that is a
+compute node, not the login node, because the build reads the card directly.
+Log in, make a CUDA toolkit available, and go to the repository:
+
 ```bash
+ssh <gpu-host>                       # a machine with a GPU in it
+module load cuda                     # or add the CUDA bin directory to PATH
+cd <path to pentadiagonal-solver>
+```
+
+Then:
+
+```bash
+bash scripts/check_env.sh            # the GPU, and whether this nvcc can build for it
 bash scripts/build.sh gpu            # configure and compile into build/
 bash scripts/run_tests.sh gpu        # run the Catch2 correctness suites
 build/apps/app_cuda 256 50 double    # solve a 256^3 grid, 50 ADI iterations
 ```
 
-build.sh detects the GPU's compute capability from nvidia-smi, and stops with
-an explanation if the CUDA toolkit in PATH cannot build for that GPU. Passing
-cpu instead of gpu builds the CPU-only configuration into build-cpu/.
+Run check_env.sh first. It reports the GPU, its compute capability, and whether
+the CUDA toolkit on PATH can generate code for that card, which is the one
+mismatch that stops a build for a reason the compiler output does not make
+obvious. Newer toolkits drop older GPUs, so a recent CUDA on an older card
+needs a 12.x toolkit instead.
+
+build.sh reads the compute capability from nvidia-smi, so no architecture has
+to be given, and it stops with the same explanation if the toolkit cannot build
+for the card. Passing cpu instead of gpu builds the CPU-only configuration into
+build-cpu/, which needs no GPU and no CUDA.
 
 ## Build options
 
@@ -135,14 +155,12 @@ best combination measured end to end.
 
 ## Moving to a different GPU
 
-Nothing in the repository is tied to a particular machine or card. On a new
-GPU, with the repository checked out and a CUDA toolkit on PATH:
+Nothing in the repository is tied to a particular machine or card. The Quick
+start above is the whole procedure on any GPU: log in, load a CUDA toolkit,
+check_env, build, test. Adding one command measures which kernel wins there:
 
 ```bash
-bash scripts/check_env.sh                          # reports this GPU and its compute capability
-bash scripts/build.sh gpu                          # builds for it, capability read from nvidia-smi
-bash scripts/run_tests.sh gpu                      # correctness on this card
-bash scripts/run_algorithm_sweep.sh 256 50 both    # which kernel wins here
+bash scripts/run_algorithm_sweep.sh 256 50 both
 ```
 
 Or the whole campaign in one non interactive command:
