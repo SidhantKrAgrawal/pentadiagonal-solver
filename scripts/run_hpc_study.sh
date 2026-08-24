@@ -6,8 +6,9 @@
 #
 # Written to be run by someone who has not seen this code before and does not
 # want to debug it.  It configures, builds, checks correctness, measures the
-# machine's own memory/compute roofline, runs the full algorithm sweep, writes
-# a summary readable without the raw data, and tars the lot.
+# machine's own memory/compute roofline, runs the full algorithm sweep, measures
+# this machine's CPU as a baseline, writes a summary readable without the raw
+# data, and tars the lot.
 #
 # Nothing is interactive.  Nothing is silently skipped: every step that fails
 # is recorded in the CSV and the summary with the reason, and the run carries
@@ -38,6 +39,9 @@
 #   GRIDS="128 256 320 384"     problem sizes N (cube N^3)
 #                       add 512 if the card has >=32 GB:  GRIDS="128 256 320 384 512"
 #   GPU_ITERS=50        timed ADI iterations per measurement
+#   CPU_ITERS=10        timed ADI iterations per CPU baseline measurement.  The
+#                       CPU solver is ~50x slower per iteration, hence the
+#                       smaller count.
 #   OUTDIR=<path>       where results go (default: results/hpc_<host>_<date>)
 #   SKIP_BUILD=1        reuse an existing build dir
 #   JOBS=16             build parallelism
@@ -82,7 +86,7 @@ hdr "pentadiagonal-solver :: HPC study :: $HOST :: $(date -Is 2>/dev/null || dat
 # -----------------------------------------------------------------------------
 # 0. Preflight -- report everything, then fail only on what is genuinely fatal.
 # -----------------------------------------------------------------------------
-hdr "[0/5] Environment"
+hdr "[0/6] Environment"
 {
   echo "host          : $HOST"
   echo "date          : $(date -Is 2>/dev/null || date)"
@@ -200,7 +204,7 @@ fi
 # than the result (e.g. "70;90" when sm_70 was dropped and sm_86 added).
 echo "cuda arch built: $CUDA_ARCH" >> "$OUT/00_environment.txt"
 
-hdr "[1/5] Build  ->  $BUILD  (arch $CUDA_ARCH, -j$JOBS)"
+hdr "[1/6] Build  ->  $BUILD  (arch $CUDA_ARCH, -j$JOBS)"
 if [ "${SKIP_BUILD:-0}" = "1" ] && [ -x "$BUILD/apps/app_cuda" ]; then
   say "SKIP_BUILD=1 and $BUILD/apps/app_cuda exists -- reusing it."
 else
@@ -265,6 +269,7 @@ APP="$BUILD/apps/app_cuda"
 PROBE="$BUILD/apps/roofline_probe_cuda"
 VERIFY="$BUILD/apps/verify_scale_cuda"
 TESTS="$BUILD/test/cuda/cuda_tests"
+CPUAPP="$BUILD/apps/adi_cpu"
 [ -x "$APP" ] || { say "FATAL: $APP missing after a successful build."; exit 1; }
 
 # Fail fast on an architecture mismatch.  Without this, a wrong-arch binary
@@ -307,7 +312,7 @@ lanes_for() {
 # -----------------------------------------------------------------------------
 # 2. Correctness -- benchmarking a wrong kernel is worse than not benchmarking.
 # -----------------------------------------------------------------------------
-hdr "[2/5] Correctness"
+hdr "[2/6] Correctness"
 CORRECT_OK=1
 if [ -x "$TESTS" ]; then
   $(TMO 1800) "$TESTS" > "$OUT/logs/tests.txt" 2>&1
@@ -350,7 +355,7 @@ say "correctness OK"
 # probe measures BOTH ends of that ratio directly and needs no profiler
 # counters, which matters because ncu is permission-blocked on many estates.
 # -----------------------------------------------------------------------------
-hdr "[3/5] Measured roofline (memory floor + FP64 issue rate)"
+hdr "[3/6] Measured roofline (memory floor + FP64 issue rate)"
 if [ -x "$PROBE" ]; then
   $(TMO 1800) "$PROBE" 256 30 > "$OUT/01_roofline_probe.txt" 2>&1
   if [ $? -eq 0 ]; then sed 's/^/  /' "$OUT/01_roofline_probe.txt" | tee -a "$LOG"
@@ -371,7 +376,7 @@ fi
 # budget falls back to a working kernel, which otherwise produces a perfectly
 # plausible number attributed to the wrong algorithm.  `honoured=no` marks it.
 # -----------------------------------------------------------------------------
-hdr "[4/5] Algorithm sweep"
+hdr "[4/6] Algorithm sweep"
 CSV="$OUT/gpu.csv"
 echo "algo,N,precision,lanes,x_requested,x_kernel,y_kernel,z_kernel,e2e_wall_ms,x_ms,y_ms,z_ms,status,honoured" > "$CSV"
 NRUN=0; NFAIL=0; NOOM=0; NUNH=0
@@ -430,11 +435,81 @@ say ""; say "-- Algorithm 4: Shared-Factorisation (assumes ADI shared coefficien
 for N in $GRIDS; do for p in double float; do gpu_run shared-fact shared-fact shared-fact "$N" "$p" -; done; done
 
 # -----------------------------------------------------------------------------
-# 5. Summary
+# 5. CPU baseline
+#
+# A GPU speedup is only meaningful against the CPU of the SAME machine.  Without
+# this phase the comparison is against whatever desktop the developer owns,
+# which on a node with two server sockets is not a defensible baseline.
+#
+# Two passes, because the full cross-product is far too slow to be worth it:
+#   (a) a thread scan at one grid, which gives the parallel-scaling curve and
+#       shows where the CPU saturates;
+#   (b) every grid at full threads, which gives the per-grid number the speedup
+#       table actually quotes.
+# The CPU solver is ~50x slower per iteration than the GPU one, so CPU_ITERS is
+# small by default and every run is bounded by `timeout`.
 # -----------------------------------------------------------------------------
-hdr "[5/5] Summary"
+hdr "[5/6] CPU baseline"
+CPUCSV="$OUT/cpu.csv"
+echo "N,precision,threads,x_ms,y_ms,z_ms,total_ms,status" > "$CPUCSV"
+
+if [ ! -x "$CPUAPP" ]; then
+  say "adi_cpu not built ($CPUAPP); skipping the CPU baseline."
+  say "NOTE: the GPU-vs-CPU speedup cannot be quoted for this machine."
+else
+  CPU_ITERS="${CPU_ITERS:-10}"
+  CORES="$(nproc 2>/dev/null || echo 1)"
+
+  # Powers of two up to the core count, plus the core count itself.  A scan of
+  # every thread count would dominate the runtime on a 96-thread node and add
+  # nothing: the curve is smooth.
+  THREADS=""
+  t=1
+  while [ "$t" -lt "$CORES" ]; do THREADS="$THREADS $t"; t=$((t * 2)); done
+  THREADS="$THREADS $CORES"
+  say "cpu iters     : $CPU_ITERS   cores: $CORES   thread scan:$THREADS"
+
+  # cpu_run <N> <precision> <threads>
+  cpu_run() {
+    local N="$1" p="$2" th="$3"
+    local tag; tag="$(printf 'cpu_%s_%s_t%s' "$N" "$p" "$th")"
+    local log="$OUT/logs/${tag}.txt"
+    local cmd="OMP_NUM_THREADS=$th OMP_PROC_BIND=close OMP_PLACES=cores $(TMO 3600) $CPUAPP $N $CPU_ITERS $p"
+    echo "\$ $cmd" > "$log"
+    if ! eval "$cmd" >> "$log" 2>&1; then
+      echo "$N,$p,$th,-,-,-,-,fail" >> "$CPUCSV"
+      say "  cpu  N=$N $p threads=$th   FAILED (log: $log)"
+      return
+    fi
+    # adi_cpu prints: CSV,precision,N,threads,x,y,z,total
+    local line; line="$(grep '^CSV,' "$log" | head -1)"
+    if [ -z "$line" ]; then
+      echo "$N,$p,$th,-,-,-,-,no-csv" >> "$CPUCSV"
+      say "  cpu  N=$N $p threads=$th   no CSV line (log: $log)"
+      return
+    fi
+    echo "$line" | awk -F, -v OFS=, '{print $3,$2,$4,$5,$6,$7,$8,"ok"}' >> "$CPUCSV"
+    say "$(echo "$line" | awk -F, '{printf "  cpu  N=%-4s %-6s threads=%-4s  total %9.3f ms", $3, $2, $4, $8}')"
+  }
+
+  say ""; say "-- (a) thread scan at N=256 --"
+  for p in double float; do
+    for th in $THREADS; do cpu_run 256 "$p" "$th"; done
+  done
+
+  say ""; say "-- (b) every grid at $CORES threads --"
+  for N in $GRIDS; do
+    [ "$N" = "256" ] && continue          # already covered by the scan above
+    for p in double float; do cpu_run "$N" "$p" "$CORES"; done
+  done
+fi
+
+# -----------------------------------------------------------------------------
+# 6. Summary
+# -----------------------------------------------------------------------------
+hdr "[6/6] Summary"
 SUM="$OUT/SUMMARY.txt"
-python3 - "$CSV" "$OUT/00_environment.txt" "$OUT/01_roofline_probe.txt" > "$SUM" 2>>"$LOG" <<'PY'
+python3 - "$CSV" "$OUT/00_environment.txt" "$OUT/01_roofline_probe.txt" "$CPUCSV" > "$SUM" 2>>"$LOG" <<'PY'
 import csv, sys, os
 csv_path, env_path, probe_path = sys.argv[1], sys.argv[2], sys.argv[3]
 PASSES = {'naive':13, 'transpose':27, 'thomas-pcr':7, 'shared-fact':4}
@@ -510,7 +585,54 @@ for r in sorted([r for r in ok if r['algo']=='thomas-pcr' and r['precision']=='d
                  and r['x_kernel']=='thomas-pcr'], key=lambda r:(int(r['N']), int(r['lanes']))):
     N, L = int(r['N']), int(r['lanes']); t = float(r['x_ms'])
     print(f"{N:>6}{L:>5}{N//L:>7}{L.bit_length()-1:>8}{t:>10.3f}{t*1e6/N**3:>13.4f}")
-print("\nFiles: gpu.csv (all rows), 01_roofline_probe.txt, logs/ (per-run stdout).")
+
+# ---------------------------------------------------------------------------
+# GPU against the CPU OF THIS MACHINE.
+#
+# Two GPU columns, because they are different claims.  "GPU general" is the
+# best of Algorithms 1-3 and is like-for-like with the CPU.  "GPU ADI" is
+# Algorithm 4, which exploits coefficients shared along a direction; the CPU
+# baseline does not, so that column measures the value of the structural
+# insight, NOT of the hardware, and must never be quoted as a hardware speedup.
+# ---------------------------------------------------------------------------
+cpu_path = sys.argv[4] if len(sys.argv) > 4 else None
+cpu = []
+if cpu_path and os.path.exists(cpu_path):
+    cpu = [r for r in csv.DictReader(open(cpu_path)) if r['status'] == 'ok']
+
+if cpu:
+    print("\n" + "="*79)
+    print("END-TO-END ADI ITERATION: BEST GPU vs BEST CPU (this machine)")
+    print("="*79)
+    print(f"{'N':>5} {'prec':>5} {'CPU ms':>10} {'thr':>4} {'GPU gen ms':>11} {'x':>7}"
+          f" {'GPU ADI ms':>11} {'x':>7}")
+    GEN = ('naive', 'transpose', 'thomas-pcr')
+    for N in sorted({int(r['N']) for r in cpu}):
+        for prec in ('double', 'float'):
+            cr = [r for r in cpu if int(r['N']) == N and r['precision'] == prec]
+            gr = [r for r in ok if int(r['N']) == N and r['precision'] == prec
+                  and r['e2e_wall_ms'] not in ('-', '')]
+            if not cr or not gr:
+                continue
+            best_cpu = min(cr, key=lambda r: float(r['total_ms']))
+            c = float(best_cpu['total_ms'])
+            gen = [float(r['e2e_wall_ms']) for r in gr if r['algo'] in GEN]
+            adi = [float(r['e2e_wall_ms']) for r in gr if r['algo'] == 'shared-fact']
+            g = min(gen) if gen else float('nan')
+            a = min(adi) if adi else float('nan')
+            print(f"{N:>5} {('FP64' if prec=='double' else 'FP32'):>5} {c:>10.2f}"
+                  f" {best_cpu['threads']:>4} {g:>11.3f} {c/g:>6.1f}x"
+                  f" {a:>11.3f} {c/a:>6.1f}x")
+    print("\nThe 'GPU gen' speedup is the one to quote.  Read it against the ratio of")
+    print("memory bandwidths: a memory-bound solver at its ceiling on both devices")
+    print("should land near that ratio, and materially above it only where the GPU")
+    print("kernel also moves less data than the CPU one.")
+else:
+    print("\nNo CPU baseline in this run, so no GPU-vs-CPU speedup can be quoted.")
+    print("(adi_cpu was not built, or every CPU run failed -- see cpu.csv.)")
+
+print("\nFiles: gpu.csv (all GPU rows), cpu.csv (CPU baseline),")
+print("       01_roofline_probe.txt, logs/ (per-run stdout).")
 PY
 if [ -s "$SUM" ]; then cat "$SUM" | tee -a "$LOG" >/dev/null; cat "$SUM"; else say "summary generation failed (python3 missing?); raw CSV is at $CSV"; fi
 
