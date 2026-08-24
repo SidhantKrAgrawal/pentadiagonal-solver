@@ -362,9 +362,10 @@ The overall design follows the Oxford scalar tridiagonal solver tridsolver, by
 Endre László, Mike Giles, Gihan Mudalige and contributors, BSD 3-Clause, at
 https://github.com/OP-DSL/tridsolver.
 
-The GPU optimisation kernels, the runtime dispatch, the benchmarking, the MPI
-enablement and the ADI structured solver are the work of Sidhant Kumar Agrawal,
-CS908 MSc dissertation, University of Warwick, supervised by Dr Gihan Mudalige.
+The GPU optimisation kernels, the runtime dispatch, the benchmarking and the
+ADI structured solver are the work of Sidhant Kumar Agrawal, MSc dissertation,
+University of Warwick, supervised by Dr Gihan Mudalige. That work is single
+node and single GPU throughout.
 
 Build scaffolding uses project_options, tests use Catch2, and the micro
 benchmarks use Google Benchmark.
