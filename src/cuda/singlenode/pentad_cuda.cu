@@ -610,23 +610,63 @@ static void pentadsolver_batch_x_algo3_launch(const Float *ds, const Float *dl,
       ds, dl, d, du, dw, x, static_cast<int>(n_sys));
 }
 
+// True if this GPU runs FP64 at the full-rate 1:2 ratio (a data-centre part)
+// rather than the 1:32 or 1:64 of a consumer part.  CUDA exposes no query for
+// the FP64:FP32 ratio, so this is an explicit list of the architectures that
+// have it: P100, V100, A100, H100, B100.  Anything not listed -- including any
+// future architecture -- is treated as reduced-rate, which keeps the shipped
+// behaviour unchanged on hardware nobody here has measured.
+//
+// Queried once and cached; cudaGetDeviceProperties is far too slow to sit in a
+// dispatch path.  A failed query is reported as reduced-rate, again so the
+// fallback is "behave as before".
+static bool device_has_full_rate_fp64() {
+  static const bool cached = [] {
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess) { return false; }
+    cudaDeviceProp prop{};
+    if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) { return false; }
+    const int cc = prop.major * 10 + prop.minor;
+    return cc == 60 || cc == 70 || cc == 80 || cc == 90 || cc == 100;
+  }();
+  return cached;
+}
+
 // Returns true if POP-PCR handled this sys_size, false if no template exists
 // for it.
 //
-// L is chosen BY PRECISION, because the two precisions are limited by
-// different resources:
-//   FP32 is memory-bound at 93% of peak, so redundant arithmetic is free and
-//     L=32 (the widest, shallowest partitioning) is right, reducing L there
-//     only lengthens the serial local sweep and costs time.
-//   FP64 is FP64-issue-bound, so the reduced solve dominates and a smaller L
-//     is a large win.  L=16 halves the per-element PCR cost versus L=32.
-// Overridable with PENTA_PCR_LANES for sweeping.
+// L (lanes per system) trades two costs against each other:
+//   a LARGER L gives each lane fewer elements (M = sys_size/L), so fewer
+//     registers and no spilling, but the reduced solve runs log2(L) PCR rounds
+//     and so does more arithmetic;
+//   a SMALLER L does less arithmetic but holds more elements per lane, and past
+//     roughly M=8 in FP64 that spills to local memory.
+// Which cost dominates is a property of the MACHINE, not of the algorithm, so
+// this is chosen per device rather than baked in:
+//
+//   FP32 -- memory-bound on every card measured, so the redundant arithmetic is
+//     free and the widest partitioning wins.  L=32 everywhere.  Measured at
+//     256^3, x: RTX 3050 2.254 ms, GTX 1080 2.727, V100 0.680, H100 0.288 --
+//     fastest at L=32 on all four.
+//   FP64, full-rate card -- arithmetic is nearly free here too, so avoiding the
+//     spill is what matters and L=32 wins by a wide margin.  Measured at 256^3,
+//     x: V100 8.793 (L=8) / 6.183 (L=16) / 1.466 (L=32); H100 1.305 / 0.795 /
+//     0.592.  The old fixed default of 16 cost a V100 4.2x.
+//   FP64, reduced-rate card -- arithmetic dominates, so the extra PCR round of
+//     L=32 is not worth the registers it saves.  L=16.  Measured at 256^3, x:
+//     GTX 1080 20.68 (L=8) / 12.59 (L=16) / 19.97 (L=32); RTX 3050 19.30 /
+//     20.86 / 37.94.  16 is best on one and within 8% on the other; 32 is
+//     roughly 2x worse on both.
+//
+// Overridable with PENTA_PCR_LANES for sweeping, which is what the measurement
+// scripts use.
 template <typename Float>
 bool pentadsolver_batch_x_algo3(const Float *ds, const Float *dl,
                                 const Float *d, const Float *du,
                                 const Float *dw, Float *x, size_t n_sys,
                                 size_t sys_size) {
-  int lanes = (sizeof(Float) == 8) ? 16 : ALGO3_W;
+  int lanes = ALGO3_W;
+  if (sizeof(Float) == 8 && !device_has_full_rate_fp64()) { lanes = 16; }
   if (const char *e = std::getenv("PENTA_PCR_LANES")) {
     const int v = std::atoi(e);
     if (v == 8 || v == 16 || v == 32) { lanes = v; }
@@ -836,7 +876,12 @@ static bool algo3_strided_launch(const Float *ds, const Float *dl,
                                  const Float *d, const Float *du,
                                  const Float *dw, Float *x, size_t n_sys,
                                  size_t stride, size_t run_len) {
-  // Only instantiate variants whose static smem tile fits the 48KB limit.
+  // Only instantiate variants whose smem tile fits the 48KB limit.  48KB is the
+  // hard ceiling on STATICALLY declared shared memory on every architecture --
+  // the larger 96KB (Volta) and 227KB (Hopper) budgets are reachable only by
+  // dynamic shared memory, which this tile is not.  So this bound stays, and a
+  // system too large for the requested BSYS is handled by retrying a narrower
+  // block in pentadsolver_batch_strided_algo3 rather than by raising the limit.
   constexpr size_t tile_bytes =
       (size_t)(ALGO3_W * M) * (BSYS + 1) * sizeof(Float);
   if constexpr (tile_bytes <= 48 * 1024) {
@@ -882,19 +927,13 @@ static bool algo3_strided_bsys(const Float *ds, const Float *dl, const Float *d,
   }
 }
 
-// BSYS (systems per block) is a template parameter, so the set of usable values
-// is fixed at compile time, but which of them is fastest is a property of the
-// GPU rather than of the algorithm.  The default comes from the calling
-// direction; PENTA_Y_BSYS and PENTA_Z_BSYS select another instantiated value so
-// the knob can be swept on whatever machine this is.
 template <typename Float>
-static bool pentadsolver_batch_strided_algo3(const Float *ds, const Float *dl,
-                                             const Float *d, const Float *du,
-                                             const Float *dw, Float *x,
-                                             size_t n_sys, size_t sys_size,
-                                             size_t stride, size_t run_len,
-                                             int bsys) {
-  if (sys_size % ALGO3_W != 0) { return false; }
+static bool algo3_strided_dispatch_bsys(const Float *ds, const Float *dl,
+                                        const Float *d, const Float *du,
+                                        const Float *dw, Float *x,
+                                        size_t n_sys, size_t sys_size,
+                                        size_t stride, size_t run_len,
+                                        int bsys) {
   switch (bsys) {
     case 2:  return algo3_strided_bsys<Float, 2 >(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
     case 4:  return algo3_strided_bsys<Float, 4 >(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
@@ -903,6 +942,58 @@ static bool pentadsolver_batch_strided_algo3(const Float *ds, const Float *dl,
     case 32: return algo3_strided_bsys<Float, 32>(ds, dl, d, du, dw, x, n_sys, sys_size, stride, run_len);
     default: return false; // BSYS not instantiated
   }
+}
+
+// Instantiated BSYS values, widest first.
+constexpr int ALGO3_BSYS_CHOICES[] = {32, 16, 8, 4, 2};
+
+// BSYS (systems per block) is a template parameter, so the set of usable values
+// is fixed at compile time, but which of them is fastest is a property of the
+// GPU rather than of the algorithm.  The default comes from the calling
+// direction; PENTA_Y_BSYS and PENTA_Z_BSYS select another instantiated value so
+// the knob can be swept on whatever machine this is.
+//
+// If the preferred width cannot run, retry the narrower ones before giving up.
+// BSYS sets the shared tile size -- 32*M*(BSYS+1)*sizeof(Float) -- against a
+// 48KB static limit, so the widest setting is the first to become unusable as
+// the system grows.  At 384^3 in FP64 the z default of BSYS=16 needs 52,224 B
+// and is refused, while BSYS=8 needs 27,648 B and runs; without this retry the
+// whole solve declined and the run was recorded as a failure, which is what
+// happened on both a V100 and an H100.  Narrowing also relaxes the
+// run_len % BSYS divisibility test, never tightens it.
+//
+// A narrower block is slower, so the substitution is reported once rather than
+// made silently: an unannounced fallback reads as a real measurement of the
+// requested configuration.
+template <typename Float>
+static bool pentadsolver_batch_strided_algo3(const Float *ds, const Float *dl,
+                                             const Float *d, const Float *du,
+                                             const Float *dw, Float *x,
+                                             size_t n_sys, size_t sys_size,
+                                             size_t stride, size_t run_len,
+                                             int bsys) {
+  if (sys_size % ALGO3_W != 0) { return false; }
+  if (algo3_strided_dispatch_bsys<Float>(ds, dl, d, du, dw, x, n_sys, sys_size,
+                                         stride, run_len, bsys)) {
+    return true;
+  }
+  for (const int cand : ALGO3_BSYS_CHOICES) {
+    if (cand >= bsys) { continue; }
+    if (algo3_strided_dispatch_bsys<Float>(ds, dl, d, du, dw, x, n_sys, sys_size,
+                                           stride, run_len, cand)) {
+      static bool announced = false;
+      if (!announced) {
+        announced = true;
+        std::fprintf(stderr,
+                     "[penta] Algorithm 3 strided: systems-per-block %d could not "
+                     "run at system size %zu (shared tile over the 48KB limit, or "
+                     "a rejected launch); using %d instead, which is slower\n",
+                     bsys, sys_size, cand);
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 // Resolve the systems-per-block for one strided direction.  Only instantiated
