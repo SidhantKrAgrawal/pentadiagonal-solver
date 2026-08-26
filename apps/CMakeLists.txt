@@ -136,14 +136,9 @@ if (BUILD_FOR_CUDA)
       pentadsolver::cuda)
     target_link_cuda(fp32_accuracy_cuda)
 
-    # Counter-free roofline probe.  Measures this GPU's FP64 issue rate and the
-    # achievable memory floor for the solver's 7-array traffic, using only
-    # timing, no ncu, no nsys metrics, no privileged counters.
-    add_executable(roofline_probe_cuda roofline_probe_cuda.cu)
-    target_include_directories(roofline_probe_cuda PRIVATE ${_project_options_SOURCE_DIR}/include)
-    target_link_libraries(roofline_probe_cuda PRIVATE
-      pentadsolver::project_options)
-    target_link_cuda(roofline_probe_cuda)
+    # The machine roofline is measured with the Empirical Roofline Tool (ERT)
+    # from Berkeley Lab rather than by anything built here.  See
+    # scripts/get_ert.sh and scripts/run_ert.sh.
   endif (BUILD_FOR_SN)
 endif (BUILD_FOR_CUDA)
 

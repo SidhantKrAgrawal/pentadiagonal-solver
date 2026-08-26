@@ -14,8 +14,9 @@
 # is recorded in the CSV and the summary with the reason, and the run carries
 # on.  The only hard stops are "no compiler" and "correctness failed".
 #
-# Expected wall time: 10-25 min total on a V100 or H100 (build ~5-10 min of
-# that, because the CUDA templates are instantiated for several tile sizes).
+# Expected wall time: 45-90 min total (build ~5-10 min of that, because the CUDA
+# templates are instantiated for several tile sizes; the roofline stage is most
+# of the rest).  Skip the roofline by not fetching ERT and it drops to 15-30.
 #
 # -----------------------------------------------------------------------------
 # IF SOMETHING GOES WRONG, IT IS ALMOST CERTAINLY ONE OF THESE THREE
@@ -43,8 +44,15 @@
 #                       CPU solver is ~50x slower per iteration, hence the
 #                       smaller count.
 #   OUTDIR=<path>       where results go (default: results/hpc_<host>_<date>)
+#   BUILD=<dir>         build directory (default: build-hpc-<host>, so that two
+#                       GPU nodes sharing one working copy do not collide)
 #   SKIP_BUILD=1        reuse an existing build dir
 #   JOBS=16             build parallelism
+#   ERT_FLOPS_LIST      flops/element sweep for the roofline stage.  Unset,
+#                       run_ert.sh picks it from the device: the full range to
+#                       1024 on a full-rate FP64 part, capped at 256 for FP64 on
+#                       a consumer card where it has already converged.  Set it
+#                       to force one list on both precisions.
 #
 # Under Slurm, just put this line in the job script; it needs one GPU.
 # =============================================================================
@@ -61,7 +69,14 @@ GRIDS="${GRIDS:-128 256 320 384}"
 GPU_ITERS="${GPU_ITERS:-50}"
 JOBS="${JOBS:-$( (nproc 2>/dev/null) || echo 8 )}"
 HOST="$(hostname -s 2>/dev/null || echo unknown)"
-BUILD="build-hpc"
+# Per-host by default.  This repository is meant to be run on machines it has
+# never seen, and such machines usually mount the working copy from shared
+# storage.  Two GPU nodes running this at once against one build directory
+# delete each other's CMake state mid-configure, and on NFS that surfaces as
+# "Stale file handle" or "Directory not empty" -- which reads like a broken
+# toolkit and is not.  Naming the directory after the host makes concurrent runs
+# safe without anyone having to know that.  .gitignore already covers build-*/.
+BUILD="${BUILD:-build-hpc-$HOST}"
 OUT="${OUTDIR:-results/hpc_${HOST}_$(date +%Y%m%d_%H%M%S)}"
 
 # Warm-up is bounded by WALL TIME, not iteration count.  A fixed warm-up count
@@ -114,6 +129,34 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   command -v nvcc >/dev/null 2>&1 || {
     say ""; say "FATAL: nvcc is not in PATH.  Try:  module load cuda"
     say "       (or add \$CUDA_HOME/bin to PATH), then re-run this script."; exit 1; }
+fi
+
+# Fetch ERT NOW rather than at stage 3.  It is a git clone, so it needs the
+# network -- and this repository ships without it (third_party/ is not
+# committed).  Discovering that fifteen minutes in, after configure, build and
+# the correctness suite, means the roofline silently vanishes into the log on
+# exactly the machines most likely to be offline: HPC compute nodes.  Doing it
+# here puts the network requirement next to the other one (cmake's FetchContent)
+# and turns a silent omission into a message the reader gets at minute zero.
+#
+# Never fatal.  A machine with no outbound network must still produce the sweep.
+ERT_EXE="$ROOT/third_party/ert/Empirical_Roofline_Tool-1.1.0/ert"
+if [ ! -x "$ERT_EXE" ]; then
+  say ""
+  say "fetching the Empirical Roofline Tool (Berkeley Lab) for the roofline stage..."
+  if bash "$ROOT/scripts/get_ert.sh" >> "$LOG" 2>&1 && [ -x "$ERT_EXE" ]; then
+    say "ERT ready."
+  else
+    say ""
+    say ">> NO ROOFLINE WILL BE PRODUCED -- could not fetch ERT (no network?)."
+    say ">> Everything else in this study still runs."
+    say ">> To get the roofline: run this on a machine with outbound network,"
+    say ">>   bash scripts/get_ert.sh"
+    say ">> then re-run this script.  ERT caches into third_party/ and is reused."
+    say ""
+  fi
+else
+  say "ERT present: $(dirname "$ERT_EXE")"
 fi
 
 # -----------------------------------------------------------------------------
@@ -241,6 +284,18 @@ else
       say ">> This looks like NO INTERNET at configure time.  Configure once on a"
       say ">> LOGIN node (dependencies cache into $BUILD/), then re-run here with"
       say ">> SKIP_BUILD=1, or just re-run this whole script on the login node."
+    elif grep -qiE "stale file handle|directory not empty|text file busy|no such file or directory: .*CMakeFiles" "$OUT/logs/configure.txt"; then
+      # Checked BEFORE the toolkit case: a concurrent run trips the same nvcc
+      # patterns the toolkit branch matches, so without this it is reported as a
+      # broken CUDA install, which sends the reader somewhere useless.
+      say ""
+      say ">> This looks like TWO RUNS SHARING ONE BUILD DIRECTORY, not a broken"
+      say ">> toolkit.  '$BUILD' is on shared storage and something else is"
+      say ">> writing to it -- typically this same script on another GPU node."
+      say ">> Each node needs its own:"
+      say ">>   BUILD=build-hpc-\$(hostname -s) bash scripts/run_hpc_study.sh"
+      say ">> (that is the default; the message means it was overridden, or two"
+      say ">>  nodes share a hostname)."
     elif grep -qiE "cuda_runtime\.h|cicc: No such file|nvcc fatal|libdevice|CMAKE_CUDA_COMPILER" "$OUT/logs/configure.txt"; then
       say ""
       say ">> This looks like a BROKEN OR INCOMPLETE CUDA TOOLKIT, not a problem with"
@@ -266,7 +321,6 @@ else
 fi
 
 APP="$BUILD/apps/app_cuda"
-PROBE="$BUILD/apps/roofline_probe_cuda"
 VERIFY="$BUILD/apps/verify_scale_cuda"
 TESTS="$BUILD/test/cuda/cuda_tests"
 CPUAPP="$BUILD/apps/adi_cpu"
@@ -351,17 +405,46 @@ say "correctness OK"
 # 3. This machine's roofline -- measured, not looked up.
 #
 # The whole argument of the study is where a kernel sits relative to this
-# machine's balance point (peak FP64 flop/s divided by peak bandwidth).  The
-# probe measures BOTH ends of that ratio directly and needs no profiler
-# counters, which matters because ncu is permission-blocked on many estates.
+# machine's balance point (peak flop/s divided by peak bandwidth).  Both ends of
+# that ratio are measured here with the Empirical Roofline Tool (ERT) from
+# Berkeley Lab, which needs no profiler counters -- that matters because ncu is
+# permission-blocked on many estates.
+#
+# ERT runs a small kernel many times over, varying how much data it touches and
+# how much arithmetic it does per element, and keeps the best time from each
+# configuration.  The outline of those best times is the roofline.  Both
+# precisions are measured: if this solver really is limited by memory traffic
+# rather than arithmetic, the memory roof should barely move between FP64 and
+# FP32 while the compute roof moves by the card's FP64:FP32 ratio.
+#
+# Skipped without failing the study if ERT has not been fetched, exactly as the
+# probe stage it replaces behaved.
 # -----------------------------------------------------------------------------
-hdr "[3/6] Measured roofline (memory floor + FP64 issue rate)"
-if [ -x "$PROBE" ]; then
-  $(TMO 1800) "$PROBE" 256 30 > "$OUT/01_roofline_probe.txt" 2>&1
-  if [ $? -eq 0 ]; then sed 's/^/  /' "$OUT/01_roofline_probe.txt" | tee -a "$LOG"
-  else say "roofline probe failed -- see $OUT/01_roofline_probe.txt"; fi
+hdr "[3/6] Machine roofline (Empirical Roofline Tool, Berkeley Lab)"
+ERTDIR="$OUT/01_roofline_ert"
+# Preflight already tried to fetch ERT and said so if it could not.  Retry once
+# here anyway: a transient network failure at startup should not cost the whole
+# roofline when the machine may have connectivity by now.
+if [ ! -x "$ERT_EXE" ]; then
+  bash "$ROOT/scripts/get_ert.sh" >> "$LOG" 2>&1 || true
+fi
+if [ -x "$ERT_EXE" ]; then
+  # The sweep is deliberately NOT pinned here.  run_ert.sh picks it from the
+  # device: the full range to 1024 on a full-rate FP64 part, where the compute
+  # roof only becomes visible past a crossover near 385 flops per element, and
+  # the same range capped at 256 for FP64 on a reduced-rate consumer card, where
+  # it has already converged and the top of the range costs an hour for about
+  # one percent.  Pinning a list here would override that judgement on every
+  # machine.  ERT_FLOPS_LIST still forces a specific list when the caller wants
+  # one, and passes straight through.
+  $(TMO 10800) bash "$ROOT/scripts/run_ert.sh" "$ERTDIR" >> "$LOG" 2>&1
+  if [ -f "$ERTDIR/SUMMARY_ERT.txt" ]; then
+    sed 's/^/  /' "$ERTDIR/SUMMARY_ERT.txt" | tee -a "$LOG"
+  else
+    say "ERT run produced no summary -- see $ERTDIR (the sweep still runs)."
+  fi
 else
-  say "roofline_probe_cuda not built; skipping (the sweep still runs)."
+  say "ERT unavailable; skipping the roofline (the sweep still runs)."
 fi
 
 # -----------------------------------------------------------------------------
@@ -509,9 +592,9 @@ fi
 # -----------------------------------------------------------------------------
 hdr "[6/6] Summary"
 SUM="$OUT/SUMMARY.txt"
-python3 - "$CSV" "$OUT/00_environment.txt" "$OUT/01_roofline_probe.txt" "$CPUCSV" > "$SUM" 2>>"$LOG" <<'PY'
-import csv, sys, os
-csv_path, env_path, probe_path = sys.argv[1], sys.argv[2], sys.argv[3]
+python3 - "$CSV" "$OUT/00_environment.txt" "$OUT/01_roofline_ert" "$CPUCSV" > "$SUM" 2>>"$LOG" <<'PY'
+import csv, sys, os, json, glob
+csv_path, env_path, ert_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 PASSES = {'naive':13, 'transpose':27, 'thomas-pcr':7, 'shared-fact':4}
 rows = [r for r in csv.DictReader(open(csv_path))]
 ok   = [r for r in rows if r['status']=='ok']
@@ -520,10 +603,26 @@ print("="*79); print("PENTADIAGONAL GPU SOLVER -- STUDY SUMMARY"); print("="*79)
 for line in open(env_path):
     if line.startswith(('host','date','git','nvcc','cuda arch','slurm')) or ', NVIDIA' in line or 'name,' in line:
         print(line.rstrip())
-if os.path.exists(probe_path):
-    print("\n--- measured roofline (this machine) ---")
-    for line in open(probe_path):
-        if '-->' in line: print("   " + line.strip())
+# --- machine roofline, as measured by ERT ------------------------------------
+if os.path.isdir(ert_dir):
+    print("\n--- machine roofline, measured on this machine (Berkeley ERT) ---")
+    for prec in ('fp64', 'fp32'):
+        jpath = os.path.join(ert_dir, prec, 'roofline.json')
+        if not os.path.exists(jpath):
+            continue
+        try:
+            d = json.load(open(jpath))['empirical']
+        except Exception as e:
+            print(f"   {prec.upper()}: unreadable ({e})"); continue
+        gf = dict((k, v) for k, v in d.get('gflops', {}).get('data', []))
+        bw = dict((k, v) for k, v in d.get('gbytes', {}).get('data', []))
+        parts = [f"{k} {v:.1f} GB/s" for k, v in bw.items()]
+        peak  = max(gf.values()) if gf else float('nan')
+        print(f"   {prec.upper():>4}  compute {peak:8.1f} GFLOP/s   " + "  ".join(parts))
+        dram = bw.get('DRAM') or (min(bw.values()) if bw else None)
+        if dram:
+            print(f"         ridge point {peak/dram:6.2f} FLOP/byte"
+                  f"  (arithmetic affordable per byte moved)")
 
 bad = [r for r in rows if r['status']!='ok']
 unh = [r for r in ok if r['honoured']=='no']
@@ -632,7 +731,8 @@ else:
     print("(adi_cpu was not built, or every CPU run failed -- see cpu.csv.)")
 
 print("\nFiles: gpu.csv (all GPU rows), cpu.csv (CPU baseline),")
-print("       01_roofline_probe.txt, logs/ (per-run stdout).")
+print("       01_roofline_ert/ (ERT roofline: roofline.json, roofline.ps/.pdf per")
+print("       precision, plus SUMMARY_ERT.txt), logs/ (per-run stdout).")
 PY
 if [ -s "$SUM" ]; then cat "$SUM" | tee -a "$LOG" >/dev/null; cat "$SUM"; else say "summary generation failed (python3 missing?); raw CSV is at $CSV"; fi
 

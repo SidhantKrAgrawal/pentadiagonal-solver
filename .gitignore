@@ -10,6 +10,12 @@ CMakeUserPresets.json
 results/
 pentadsolver_*.tar.gz
 
+# Working notes and analysis write-ups: local only, never published
+docs/
+
+# Third-party tools fetched by scripts/get_ert.sh
+third_party/
+
 # Prerequisites / objects / libs / executables
 *.d
 *.slo

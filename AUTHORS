@@ -1,0 +1,22 @@
+pentadsolver-gpu — authors and provenance
+==========================================
+
+GPU optimisation kernels (steps 4–11), runtime kernel dispatch, benchmarking
+campaign, MPI enablement, problem-size scale-up study, FP32 accuracy study,
+and the ADI-structured (shared-coefficient) solver:
+    Sidhant Kumar Agrawal  <sidhantkragrawal@gmail.com>
+    CS908 MSc dissertation, University of Warwick
+    Supervisor: Dr Gihan Mudalige
+
+Original CPU and CUDA pentadiagonal solver base (library structure, CPU
+OpenMP/AVX2 solver, MPI reduced-system solver, ADI cavity application,
+correctness suite):
+    Nidhi Shukla
+    CS907, University of Warwick
+
+The overall design follows the Oxford scalar tridiagonal solver "tridsolver":
+    Endre László, Mike Giles, Gihan Mudalige, and contributors
+    https://github.com/OP-DSL/tridsolver   (BSD 3-Clause, OP-DSL)
+
+Build scaffolding uses cpp-best-practices/project_options (fetched at configure
+time). Tests use Catch2; micro-benchmarks use Google Benchmark.

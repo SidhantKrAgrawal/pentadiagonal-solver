@@ -181,8 +181,12 @@ roofline, a grid sweep and a tarball of the output:
 bash scripts/run_hpc_study.sh
 ```
 
-Expect 10 to 25 minutes. It stops if the correctness suite fails, and records any
-other failure with its reason rather than skipping it silently.
+Expect 45 to 90 minutes. Most of that is the roofline stage, which drives
+Berkeley Lab's ERT over two precisions; set `ERT_FLOPS_LIST=1,64,1024` to trade
+resolution for time, or skip it entirely by not running `scripts/get_ert.sh`
+(the stage is then reported as skipped and the sweep still runs). The script
+stops if the correctness suite fails, and records any other failure with its
+reason rather than skipping it silently.
 
 ## Build options
 
@@ -198,11 +202,12 @@ A 2D lid driven cavity CFD application, on the CPU solver:
 build/apps/app_cpu                   # app_cpu_orig runs the unoptimised solver
 ```
 
-A probe that measures this GPU's FP64 issue rate and memory floor by timing
-alone, with no profiler counters:
+The machine's roofline is measured with Berkeley Lab's Empirical Roofline Tool
+rather than by an application built here:
 
 ```bash
-build/apps/roofline_probe_cuda
+bash scripts/get_ert.sh              # fetch it once
+bash scripts/run_ert.sh              # measure, FP64 and FP32
 ```
 
 ## Choosing the algorithm
@@ -294,12 +299,27 @@ build/apps/verify_scale_cpu        320 double
 | `run_algorithm_sweep.sh` | N, iters, precision, `--with-restricted` | The per direction comparison, in two phases. Phase 1 measures every algorithm that has a kernel for a direction while the other two are held on a fixed baseline, which makes the rows comparable. Phase 2 composes the per direction winners and measures true end to end wall time. `--with-restricted` adds shared-fact. |
 | `run_grid_transcript.sh` | gpu iters, cpu iters | Runs the same matrix across grids 128, 256, 320 and 384 in both precisions, recording each run as the command, its verbatim output and the extracted result, so every number traces back to what produced it. Also emits cpu.csv and gpu.csv. |
 | `build_grid_report.py` | stamp, out.txt | Assembles the directories run_grid_transcript.sh wrote into one text report: methodology header, run by run transcripts, summary tables, per axis winners, and a per machine analysis. Machine names, GPU models, grids and precisions all come from the data, so it works with one machine or several. Excludes Algorithm 2 from the y and z rankings, since its y and z columns are the naive strided solve, and separates any row whose requested kernel was not the one that ran. |
-| `run_hpc_study.sh` | none, env only | One non interactive command for an unfamiliar machine: configure, build, correctness suite with a hard stop on failure, roofline, full sweep across grids, precisions and lane counts, readable summary, tarball. Builds for the compute capability of the GPU it finds, and only falls back to a fat binary when no GPU is visible. Nothing is silently skipped: a failed step is recorded with its reason and the run continues. Expect 10 to 25 minutes. Knobs are CUDA_ARCH, GRIDS, GPU_ITERS, SKIP_BUILD and OUTDIR. |
+| `run_hpc_study.sh` | none, env only | One non interactive command for an unfamiliar machine: configure, build, correctness suite with a hard stop on failure, the machine roofline via Berkeley ERT, full sweep across grids, precisions and lane counts, readable summary, tarball. Builds for the compute capability of the GPU it finds, and only falls back to a fat binary when no GPU is visible. Nothing is silently skipped: a failed step is recorded with its reason and the run continues. Expect 45 to 90 minutes, most of it the roofline. Knobs are CUDA_ARCH, GRIDS, GPU_ITERS, ERT_FLOPS_LIST, SKIP_BUILD and OUTDIR. |
 
-roofline_probe_cuda is an app rather than a script. It measures the GPU's FP64
-issue rate and the memory floor for the solver's traffic using timing alone, by
-sweeping the number of injected FMAs per element, so it needs no profiler
-counters.
+`get_ert.sh` and `run_ert.sh` measure the machine's roofline. They do not
+implement the measurement; they drive the [Empirical Roofline Tool
+(ERT)](https://bitbucket.org/berkeleylab/cs-roofline-toolkit) from Berkeley Lab,
+which is fetched into `third_party/` and is not committed here. ERT runs a small
+kernel many times over, varying how much data it touches and how much arithmetic
+it does per element, and keeps the best time from each configuration; the
+outline of those best times is the roofline. It needs no profiler counters,
+which matters because `ncu` is permission-blocked on many estates.
+
+```bash
+bash scripts/get_ert.sh              # fetch it once
+bash scripts/run_ert.sh              # measure, FP64 and FP32
+```
+
+Output per precision is `roofline.json` (the memory roof at each cache level and
+the compute roof), `roofline.ps`/`.pdf` (the graph) and `roofline.tex`. Knobs:
+`ERT_ARCH`, `ERT_PRECISIONS`, `ERT_FLOPS_LIST`, `ERT_EXPERIMENTS`, `ERT_MEM_MAX`
+and `ERT_RUN_CMD` (set the last to `"srun -n 1 ./ERT_CODE"` on a Slurm cluster).
+Budget roughly five minutes per flops/element value per precision.
 
 ## Layout
 
@@ -320,6 +340,18 @@ build the cpu preset instead.
 
 If the configure step hangs or fails while downloading, there is no internet on
 that node. Configure on a login node, then build anywhere.
+
+The roofline stage needs the network for the same reason: the Empirical Roofline
+Tool is fetched at run time rather than committed here. `run_hpc_study.sh` fetches
+it during preflight and, if it cannot, says so immediately and continues without a
+roofline — the rest of the study is unaffected. On a node with no outbound network,
+fetch it once from somewhere that has one:
+
+```bash
+bash scripts/get_ert.sh     # caches into third_party/, reused by every later run
+```
+
+then re-run the study on the GPU node.
 
 If the build stops at `cuda_runtime.h: No such file or directory`, the CUDA on
 PATH is incomplete: the nvcc binary is there but its headers are not. This is
