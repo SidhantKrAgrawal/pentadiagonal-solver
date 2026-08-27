@@ -101,6 +101,58 @@ hdr "pentadiagonal-solver :: HPC study :: $HOST :: $(date -Is 2>/dev/null || dat
 # -----------------------------------------------------------------------------
 # 0. Preflight -- report everything, then fail only on what is genuinely fatal.
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Find CUDA before doing anything else.
+#
+# On a module-based estate nvcc is not on PATH until a module is loaded, and
+# telling the user to do that first defeats the point of a one-command script.
+# So look for it: initialise environment modules, pick a CUDA module, and fall
+# back to the usual install locations.  Everything here is best-effort and
+# silent on success; if it fails the existing "nvcc is not in PATH" message
+# still fires with its instructions.
+#
+# WHICH module: the newest CUDA 12.x, not simply the newest available.  CUDA 13
+# dropped support for Maxwell, Pascal and Volta, so on a GTX 1080 (sm_61) or a
+# V100 (sm_70) a 13.x toolkit cannot build for the card in the machine.  12.x
+# spans sm_50 through sm_90 and is the safe choice on every GPU this is likely
+# to meet.  Override by loading a module yourself, or set CUDA_HOME.
+# -----------------------------------------------------------------------------
+if ! command -v nvcc >/dev/null 2>&1; then
+  if [ -n "${CUDA_HOME:-}" ] && [ -x "${CUDA_HOME}/bin/nvcc" ]; then
+    PATH="${CUDA_HOME}/bin:$PATH"; export PATH
+  fi
+fi
+
+if ! command -v nvcc >/dev/null 2>&1; then
+  # `module` is a shell function, so it does not survive into a non-interactive
+  # shell until one of these init scripts is sourced.  They are not written for
+  # `set -u`, hence the guard.
+  for _init in /etc/profile.d/modules.sh /usr/share/Modules/init/bash \
+               /usr/share/lmod/lmod/init/bash /etc/profile.d/lmod.sh; do
+    if [ -r "$_init" ]; then set +u; . "$_init" >/dev/null 2>&1; set -u; fi
+    command -v module >/dev/null 2>&1 && break
+  done
+
+  if command -v module >/dev/null 2>&1; then
+    _cuda_mods="$(set +u; module -t avail CUDA 2>&1 | grep -E '^CUDA/' | sed 's:/*$::' | sort -V)"
+    # plain 12.x first (no -cudnn or similar suffix), then any 12.x, then any
+    _pick="$(printf '%s\n' "$_cuda_mods" | grep -E '^CUDA/12(\.[0-9]+)*$'  | tail -1)"
+    [ -z "$_pick" ] && _pick="$(printf '%s\n' "$_cuda_mods" | grep -E '^CUDA/12\.' | tail -1)"
+    [ -z "$_pick" ] && _pick="$(printf '%s\n' "$_cuda_mods" | tail -1)"
+    if [ -n "$_pick" ]; then
+      set +u; module load "$_pick" >/dev/null 2>&1; set -u
+      command -v nvcc >/dev/null 2>&1 && CUDA_MODULE_LOADED="$_pick"
+    fi
+  fi
+fi
+
+if ! command -v nvcc >/dev/null 2>&1; then
+  for _d in /usr/local/cuda/bin /opt/cuda/bin /usr/lib/nvidia-cuda-toolkit/bin \
+            /local/java/cuda-*/bin; do
+    if [ -x "$_d/nvcc" ]; then PATH="$_d:$PATH"; export PATH; break; fi
+  done
+fi
+
 hdr "[0/6] Environment"
 {
   echo "host          : $HOST"
@@ -111,6 +163,8 @@ hdr "[0/6] Environment"
   echo "cmake         : $(cmake --version 2>/dev/null | head -1 || echo MISSING)"
   echo "g++           : $(g++ --version 2>/dev/null | head -1 || echo MISSING)"
   echo "nvcc          : $(nvcc --version 2>/dev/null | grep -i release | sed 's/^ *//' || echo MISSING)"
+  if [ -n "${CUDA_MODULE_LOADED:-}" ]; then echo "cuda found by : module load $CUDA_MODULE_LOADED"
+  else echo "cuda found by : already on PATH, or via CUDA_HOME / a standard install location"; fi
   echo "cuda arch     : $CUDA_ARCH"
   echo "cpu cores     : $(nproc 2>/dev/null || echo '?')"
   if command -v nvidia-smi >/dev/null 2>&1; then
