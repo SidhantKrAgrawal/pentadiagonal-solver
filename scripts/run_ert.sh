@@ -98,7 +98,11 @@ fi
 cleanup() { rm -f "$LOCK"; }
 trap cleanup EXIT INT TERM
 
-GPU_APPS="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -c . || echo 0)"
+# `grep -c` already prints 0 when it matches nothing, and exits 1 while doing so.
+# A `|| echo 0` here therefore appends a SECOND zero, the variable becomes the two
+# lines "0\n0", and the -gt test below dies with "integer expression expected" --
+# which silently disabled this guard on every idle machine it was meant to protect.
+GPU_APPS="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -c . )"
 if [ "${GPU_APPS:-0}" -gt 0 ]; then
   say "FATAL: $GPU_APPS process(es) are already using this GPU."
   say "       ERT measures ceilings, so it needs the card to itself."
@@ -216,6 +220,34 @@ for PREC in $PRECISIONS; do
   rm -rf "${ERT_DIR:?}/$RESULTS_NAME"
   ( cd "$ERT_DIR" && ./ert --verbose 1 "$CFG" ) > "$OUT/ert_${lc}.log" 2>&1
   rc=$?
+
+  # A plotting failure must not cost us the measurement.
+  #
+  # ERT's driver runs build -> run -> process -> graphs -> roofline, and
+  # graphs() calls sys.exit(1) on any gnuplot error -- BEFORE roofline() writes
+  # roofline.json.  So one unsupported gnuplot directive throws away ceilings
+  # that were already measured and reduced.  That is exactly what happened on an
+  # H100 host whose gnuplot 6 rejects ERT 1.1.0's `set clabel`; a V100 host on
+  # gnuplot 5 was unaffected.  get_ert.sh now strips that particular line, but
+  # any other version drift would do the same thing, so do not rely on having
+  # found them all: retry once with plotting off.
+  #
+  # --no-gnuplot is safe for the numbers.  graphs() becomes a no-op returning 0,
+  # and in roofline() the json.dump happens before the gnuplot branch, so
+  # roofline.json -- the only thing the study summary reads -- is still written.
+  # The cost is the .ps/.pdf plots for that precision, and nothing else.
+  if [ $rc -ne 0 ]; then
+    say "  ERT exited $rc.  Retrying without plotting, to salvage the ceilings..."
+    rm -rf "${ERT_DIR:?}/$RESULTS_NAME"
+    ( cd "$ERT_DIR" && ./ert --verbose 1 --no-gnuplot "$CFG" ) \
+        > "$OUT/ert_${lc}_nognuplot.log" 2>&1
+    rc=$?
+    if [ $rc -eq 0 ]; then
+      say "  recovered: ceilings measured, but no plot for $PREC (see"
+      say "             $OUT/ert_${lc}.log for why plotting failed)."
+      NOPLOT="${NOPLOT:-} $PREC"
+    fi
+  fi
 
   if [ $rc -ne 0 ]; then
     say "  FAILED (exit $rc).  Last 25 lines of $OUT/ert_${lc}.log:"
